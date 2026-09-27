@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
 import { SPEC_FIELDS, SPEC_STATUSES, SPEC_STATUS_LABELS } from "@/lib/spec-labels";
 import type {
+  ApiAdminBrand,
   ApiDeviceDetail,
   ApiDeviceWriteRequest,
   ApiPublicationStatus,
@@ -18,8 +21,7 @@ type ConfigFieldState = { label: string; storageGb: string; ramGb: string; ramSt
 type ColorFieldState = { name: string; imageUrl: string; colorCode: string; exclusive: boolean };
 
 type FormState = {
-  brandSlug: string;
-  brandName: string;
+  brandId: string;
   slug: string;
   name: string;
   releaseDate: string;
@@ -45,8 +47,7 @@ function emptySpecs(): Record<string, SpecFieldState> {
 
 function emptyForm(): FormState {
   return {
-    brandSlug: "",
-    brandName: "",
+    brandId: "",
     slug: "",
     name: "",
     releaseDate: "",
@@ -71,7 +72,7 @@ function toDatetimeLocal(iso: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function fromDevice(device: ApiDeviceDetail): FormState {
+function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState {
   const specs = emptySpecs();
   for (const { key } of SPEC_FIELDS) {
     const spec = device.specs[key];
@@ -85,8 +86,7 @@ function fromDevice(device: ApiDeviceDetail): FormState {
   }
 
   return {
-    brandSlug: device.brandSlug,
-    brandName: device.brand,
+    brandId: brands.find((brand) => brand.slug === device.brandSlug)?.id ?? "",
     slug: device.slug,
     name: device.name,
     releaseDate: device.releaseDate,
@@ -185,14 +185,20 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     isPrimary: source.isPrimary,
   }));
 
-  if (!form.brandSlug.trim() || !form.brandName.trim() || !form.slug.trim() || !form.name.trim() || !form.releaseDate) {
-    return { error: "브랜드, slug, 기기명, 출시일은 필수입니다." };
+  if (!form.brandId) {
+    return { error: "브랜드를 선택해주세요." };
+  }
+  if (!form.slug.trim() || !form.name.trim() || !form.releaseDate) {
+    return { error: "slug, 기기명, 출시일은 필수입니다." };
   }
 
   return {
     payload: {
-      brandSlug: form.brandSlug,
-      brandName: form.brandName,
+      // Placeholders — confirmSave re-resolves these fresh from form.brandId
+      // right before sending (see its comment), so a brand renamed after
+      // this form was loaded can't silently create a duplicate brand.
+      brandSlug: "",
+      brandName: "",
       slug: form.slug,
       name: form.name,
       releaseDate: form.releaseDate,
@@ -224,16 +230,22 @@ const addButtonClass =
 export function DeviceForm({
   mode,
   device,
+  brands,
 }: {
   mode: "create" | "edit";
   device?: ApiDeviceDetail;
+  brands: ApiAdminBrand[];
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<FormState>(() => (device ? fromDevice(device) : emptyForm()));
+  const [form, setForm] = useState<FormState>(() =>
+    device ? fromDevice(device, brands) : emptyForm(),
+  );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [confirmingPayload, setConfirmingPayload] = useState<ApiDeviceWriteRequest | null>(null);
 
-  async function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
 
@@ -243,35 +255,75 @@ export function DeviceForm({
       return;
     }
 
+    setConfirmingPayload(result.payload);
+  }
+
+  async function confirmSave() {
+    const draftPayload = confirmingPayload;
+    if (!draftPayload) return;
+    setConfirmingPayload(null);
+
     setSubmitting(true);
     try {
+      // Re-resolve the brand fresh right before saving (not from the
+      // possibly-stale `brands` list this form was opened with) — closes
+      // the race where someone renames the brand's slug while this form is
+      // open, which would otherwise make the stale slug upsert into a new,
+      // duplicate brand row instead of updating the intended one.
+      const brandResponse = await fetch(`/api/admin/brands/${form.brandId}`);
+      if (!brandResponse.ok) {
+        setError("선택한 브랜드를 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.");
+        setSubmitting(false);
+        return;
+      }
+      const brand = (await brandResponse.json()) as ApiAdminBrand;
+      const payload: ApiDeviceWriteRequest = {
+        ...draftPayload,
+        brandSlug: brand.slug,
+        brandName: brand.name,
+      };
+
       const response = await fetch(
         mode === "create" ? "/api/admin/devices" : `/api/admin/devices/${device!.id}`,
         {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(result.payload),
+          body: JSON.stringify(payload),
         },
       );
 
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         setError(body?.error?.message ?? "저장하지 못했습니다.");
+        setSubmitting(false);
         return;
       }
 
       const saved = (await response.json()) as ApiDeviceDetail;
-      router.push(`/devices/${saved.id}/edit`);
-      router.refresh();
+      setToast("저장되었습니다");
+      // Give the toast a moment on screen before navigating away — a create
+      // navigates to a brand-new /edit URL and unmounts this component, so
+      // the toast would otherwise never actually be seen.
+      window.setTimeout(() => {
+        router.push(`/devices/${saved.id}/edit`);
+        router.refresh();
+      }, 900);
     } catch {
       setError("저장하지 못했습니다. 네트워크 상태를 확인해주세요.");
-    } finally {
       setSubmitting(false);
     }
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+      {confirmingPayload ? (
+        <ConfirmDialog
+          message="저장하시겠습니까?"
+          onCancel={() => setConfirmingPayload(null)}
+          onConfirm={confirmSave}
+        />
+      ) : null}
+      {toast ? <Toast message={toast} /> : null}
       {error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
           {error}
@@ -281,25 +333,32 @@ export function DeviceForm({
       <section className={sectionClass}>
         <h2 className="mb-3 text-sm font-semibold text-zinc-950 dark:text-zinc-50">기본 정보</h2>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>브랜드 slug</label>
-            <input
+          <div className="col-span-2">
+            <label className={labelClass}>브랜드</label>
+            <select
               className={inputClass}
-              value={form.brandSlug}
-              onChange={(e) => setForm({ ...form, brandSlug: e.target.value })}
-              placeholder="samsung"
+              value={form.brandId}
+              onChange={(e) => setForm({ ...form, brandId: e.target.value })}
               required
-            />
-          </div>
-          <div>
-            <label className={labelClass}>브랜드명</label>
-            <input
-              className={inputClass}
-              value={form.brandName}
-              onChange={(e) => setForm({ ...form, brandName: e.target.value })}
-              placeholder="SAMSUNG"
-              required
-            />
+            >
+              <option value="" disabled>
+                브랜드를 선택하세요
+              </option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.name} ({brand.slug})
+                </option>
+              ))}
+            </select>
+            {brands.length === 0 ? (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                등록된 브랜드가 없습니다.{" "}
+                <Link href="/brands" className="underline">
+                  브랜드 관리
+                </Link>
+                에서 먼저 추가해주세요.
+              </p>
+            ) : null}
           </div>
           <div>
             <label className={labelClass}>slug</label>

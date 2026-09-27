@@ -4,16 +4,10 @@ import { redirect } from "next/navigation";
 
 import { CameraTable } from "@/components/cameras/camera-table";
 import { listAdminCameras } from "@/lib/api/client";
-import type { ApiCameraSeries } from "@/lib/api/types";
 
 export const metadata: Metadata = { title: "카메라관리" };
 
 const PAGE_SIZE_OPTIONS = [30, 50, 100];
-const SERIES_OPTIONS: { value: ApiCameraSeries; label: string }[] = [
-  { value: "EOS 5D", label: "EOS 5D 시리즈" },
-  { value: "EOS 6D", label: "EOS 6D 시리즈" },
-  { value: "EOS x0D", label: "EOS 10D–90D" },
-];
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -21,10 +15,14 @@ function single(value: SearchParams[string]): string {
   return typeof value === "string" ? value : "";
 }
 
+function sanitize(value: string): string {
+  return Array.from(value.replace(/\p{Cc}/gu, " ").trim()).slice(0, 100).join("");
+}
+
 export default async function CamerasPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
-  const q = Array.from(single(params.q).replace(/\p{Cc}/gu, " ").trim()).slice(0, 100).join("");
-  const series = SERIES_OPTIONS.find((option) => option.value === single(params.series))?.value;
+  const q = sanitize(single(params.q));
+  const series = sanitize(single(params.series)) || undefined;
   const requestedPage = Number(single(params.page));
   const page = Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 10000 ? requestedPage : 1;
   const requestedPageSize = Number(single(params.pageSize));
@@ -46,7 +44,12 @@ export default async function CamerasPage({ searchParams }: { searchParams: Prom
 
   return (
     <div>
-      <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">카메라관리</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">카메라관리</h1>
+        <Link href="/cameras/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+          + 카메라 추가
+        </Link>
+      </div>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
         출시월은 일본 출시 기준이며, 무게는 배터리와 메모리 카드를 제외한 본체 기준입니다.
       </p>
@@ -54,14 +57,11 @@ export default async function CamerasPage({ searchParams }: { searchParams: Prom
       <form action="/cameras" method="get" className="my-5 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
           모델 검색
-          <input key={q} type="search" name="q" defaultValue={q} maxLength={100} placeholder="예: 캐논 5D, EOS 90D" className={`${inputClassName} w-60`} />
+          <input key={q} type="search" name="q" defaultValue={q} maxLength={100} placeholder="예: 캐논 5D, 삼성 NX" className={`${inputClassName} w-60`} />
         </label>
         <label className="flex flex-col gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
           시리즈
-          <select key={series ?? "all"} name="series" defaultValue={series ?? ""} className={inputClassName}>
-            <option value="">전체 시리즈</option>
-            {SERIES_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+          <input key={series ?? ""} type="search" name="series" defaultValue={series ?? ""} maxLength={100} placeholder="예: NX, EOS 5D" className={inputClassName} />
         </label>
         <label className="flex flex-col gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
           페이지당

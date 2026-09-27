@@ -1,8 +1,12 @@
 import type {
+  ApiAdminBrand,
   ApiAdminDeviceSearchField,
   ApiAdminDeviceSort,
+  ApiBrandInput,
+  ApiCamera,
   ApiCameraListResponse,
   ApiCameraSeries,
+  ApiCameraWriteRequest,
   ApiCatalogBrand,
   ApiDeviceDetail,
   ApiDeviceListResponse,
@@ -62,21 +66,34 @@ async function apiFetch<T>(
   );
 
   if (!response.ok) {
-    let code = "unknown_error";
-    let message = `API request to ${path} failed with status ${response.status}`;
-
-    try {
-      const body = (await response.json()) as ApiErrorEnvelope;
-      code = body.error?.code ?? code;
-      message = body.error?.message ?? message;
-    } catch {
-      // Non-JSON error body (e.g. 408 timeout) — keep the default message.
-    }
-
-    throw new ApiRequestError(response.status, code, message);
+    await throwApiRequestError(path, response);
   }
 
   return response.json() as Promise<T>;
+}
+
+// Same error handling as apiFetch, but for a DELETE whose success response
+// (204) has no body to parse.
+async function apiDelete(path: string): Promise<void> {
+  const response = await fetch(buildUrl(path), { method: "DELETE", cache: "no-store" });
+  if (!response.ok) {
+    await throwApiRequestError(path, response);
+  }
+}
+
+async function throwApiRequestError(path: string, response: Response): Promise<never> {
+  let code = "unknown_error";
+  let message = `API request to ${path} failed with status ${response.status}`;
+
+  try {
+    const body = (await response.json()) as ApiErrorEnvelope;
+    code = body.error?.code ?? code;
+    message = body.error?.message ?? message;
+  } catch {
+    // Non-JSON error body (e.g. 408 timeout) — keep the default message.
+  }
+
+  throw new ApiRequestError(response.status, code, message);
 }
 
 export async function listDevices(params: { page?: number; pageSize?: number } = {}): Promise<ApiDeviceListResponse> {
@@ -191,6 +208,65 @@ export async function createDevice(payload: ApiDeviceWriteRequest): Promise<ApiD
 
 export async function updateDevice(id: string, payload: ApiDeviceWriteRequest): Promise<ApiDeviceDetail> {
   return apiFetch<ApiDeviceDetail>(`/api/v1/devices/by-id/${encodeURIComponent(id)}`, undefined, {
+    method: "PUT",
+    body: payload,
+  });
+}
+
+// Full, unfiltered brand roster (unlike listAdminDeviceBrands, which only
+// returns brands that already have a smartphone) — for the brand management
+// page and the device/camera form's brand dropdown.
+export async function listAdminBrands(): Promise<ApiAdminBrand[]> {
+  return apiFetch<ApiAdminBrand[]>("/api/v1/brands", undefined, { noStore: true });
+}
+
+export async function getAdminBrandById(id: string): Promise<ApiAdminBrand | null> {
+  try {
+    return await apiFetch<ApiAdminBrand>(
+      `/api/v1/brands/${encodeURIComponent(id)}`,
+      undefined,
+      { noStore: true },
+    );
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function createBrand(payload: ApiBrandInput): Promise<ApiAdminBrand> {
+  return apiFetch<ApiAdminBrand>("/api/v1/brands", undefined, { method: "POST", body: payload });
+}
+
+export async function updateBrand(id: string, payload: ApiBrandInput): Promise<ApiAdminBrand> {
+  return apiFetch<ApiAdminBrand>(`/api/v1/brands/${encodeURIComponent(id)}`, undefined, {
+    method: "PUT",
+    body: payload,
+  });
+}
+
+export async function deleteBrand(id: string): Promise<void> {
+  return apiDelete(`/api/v1/brands/${encodeURIComponent(id)}`);
+}
+
+export async function getAdminCameraById(id: string): Promise<ApiCamera | null> {
+  try {
+    return await apiFetch<ApiCamera>(
+      `/api/v1/cameras/by-id/${encodeURIComponent(id)}`,
+      undefined,
+      { noStore: true },
+    );
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function createCamera(payload: ApiCameraWriteRequest): Promise<ApiCamera> {
+  return apiFetch<ApiCamera>("/api/v1/cameras", undefined, { method: "POST", body: payload });
+}
+
+export async function updateCamera(id: string, payload: ApiCameraWriteRequest): Promise<ApiCamera> {
+  return apiFetch<ApiCamera>(`/api/v1/cameras/by-id/${encodeURIComponent(id)}`, undefined, {
     method: "PUT",
     body: payload,
   });

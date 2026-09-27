@@ -21,6 +21,19 @@ export type ApiCatalogBrand = {
   name: string;
 };
 
+// The full brand roster (unfiltered by category or device/camera existence),
+// for the brand management page and the device/camera form's brand dropdown.
+export type ApiAdminBrand = {
+  id: string;
+  slug: string;
+  name: string;
+};
+
+export type ApiBrandInput = {
+  slug: string;
+  name: string;
+};
+
 export type ApiDeviceSummary = {
   id: string;
   slug: string;
@@ -90,7 +103,11 @@ export type ApiDeviceListResponse = {
 };
 
 // Mirrors the BO-only camera contract in device-lover-api/src/dto/camera.rs.
-export type ApiCameraSeries = "EOS 5D" | "EOS 6D" | "EOS x0D";
+// `series` is free text (product-line label, e.g. "NX", "EOS 5D") — no
+// longer a closed Canon-only enum now that other brands can be added.
+export type ApiCameraSeries = string;
+export type ApiCameraType = "DSLR" | "mirrorless" | "compact";
+export type ApiCameraSensorFormat = "full_frame" | "aps_c" | "micro_four_thirds" | "one_inch";
 
 export type ApiCamera = {
   id: string;
@@ -101,10 +118,11 @@ export type ApiCamera = {
   series: ApiCameraSeries;
   releaseMonth: string;
   cameraType: string;
-  sensorFormat: "full_frame" | "aps_c";
+  sensorFormat: ApiCameraSensorFormat;
   effectiveMegapixels: number;
   imageProcessor: string;
-  lensMount: string;
+  // null for fixed-lens (compact) cameras — there's no interchangeable mount.
+  lensMount: string | null;
   maxContinuousFps: number;
   continuousShootingNote: string | null;
   videoSpec: string;
@@ -119,6 +137,27 @@ export type ApiCamera = {
 export type ApiCameraListResponse = {
   items: ApiCamera[];
   pagination: ApiPagination;
+};
+
+export type ApiCameraWriteRequest = {
+  brandSlug: string;
+  brandName: string;
+  slug: string;
+  name: string;
+  series: string;
+  releaseMonth: string;
+  cameraType: string;
+  sensorFormat: ApiCameraSensorFormat;
+  effectiveMegapixels: number;
+  imageProcessor: string;
+  lensMount: string | null;
+  maxContinuousFps: number;
+  continuousShootingNote: string | null;
+  videoSpec: string;
+  bodyWeightG: number;
+  sourceUrl: string;
+  sourceTitle: string;
+  checkedAt: string;
 };
 
 export type ApiSpecInput = {

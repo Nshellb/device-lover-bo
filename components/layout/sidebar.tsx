@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/accounts", label: "BO 계정 관리" },
+  { href: "/brands", label: "브랜드 관리" },
   { href: "/devices", label: "스마트폰 관리" },
   { href: "/cameras", label: "카메라관리" },
 ];

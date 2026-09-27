@@ -1,6 +1,13 @@
+import Link from "next/link";
+
 import type { ApiCamera } from "@/lib/api/types";
 
-const SENSOR_LABELS = { full_frame: "풀프레임", aps_c: "APS-C" };
+const SENSOR_LABELS = {
+  full_frame: "풀프레임",
+  aps_c: "APS-C",
+  micro_four_thirds: "마이크로 포서드",
+  one_inch: "1형",
+};
 
 export function CameraTable({ cameras }: { cameras: ApiCamera[] }) {
   return (
@@ -9,7 +16,7 @@ export function CameraTable({ cameras }: { cameras: ApiCamera[] }) {
         <caption className="sr-only">카메라 모델별 주요 사양과 공식 출처</caption>
         <thead className="bg-zinc-50 text-xs font-semibold text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
           <tr>
-            {["브랜드", "모델명", "출시월", "센서", "유효 화소", "이미지 프로세서", "렌즈 마운트", "최대 연사", "동영상", "본체 무게", "출처"].map((label) => (
+            {["브랜드", "모델명", "출시월", "센서", "유효 화소", "이미지 프로세서", "렌즈 마운트", "최대 연사", "동영상", "본체 무게", "출처", ""].map((label) => (
               <th key={label} scope="col" className="whitespace-nowrap px-4 py-3 font-semibold">{label}</th>
             ))}
           </tr>
@@ -28,7 +35,7 @@ export function CameraTable({ cameras }: { cameras: ApiCamera[] }) {
               <td className="whitespace-nowrap px-4 py-3">{SENSOR_LABELS[camera.sensorFormat]}</td>
               <td className="whitespace-nowrap px-4 py-3 tabular-nums">{camera.effectiveMegapixels} MP</td>
               <td className="whitespace-nowrap px-4 py-3">{camera.imageProcessor}</td>
-              <td className="whitespace-nowrap px-4 py-3">{camera.lensMount}</td>
+              <td className="whitespace-nowrap px-4 py-3">{camera.lensMount ?? "—"}</td>
               <td className="px-4 py-3">
                 <span className="whitespace-nowrap tabular-nums">{camera.maxContinuousFps} fps</span>
                 {camera.continuousShootingNote ? (
@@ -49,11 +56,19 @@ export function CameraTable({ cameras }: { cameras: ApiCamera[] }) {
                   공식 사양 ↗
                 </a>
               </td>
+              <td className="whitespace-nowrap px-4 py-3">
+                <Link
+                  href={`/cameras/${camera.id}/edit`}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-50"
+                >
+                  수정
+                </Link>
+              </td>
             </tr>
           ))}
           {cameras.length === 0 ? (
             <tr>
-              <td colSpan={11} className="px-4 py-12 text-center">표시할 카메라가 없습니다.</td>
+              <td colSpan={12} className="px-4 py-12 text-center">표시할 카메라가 없습니다.</td>
             </tr>
           ) : null}
         </tbody>
