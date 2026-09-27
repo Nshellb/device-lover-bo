@@ -1,9 +1,10 @@
-// Matches the 27 keys in device-lover-api's src/catalog.rs SPEC_KEYS.
+// Matches the 26 keys in device-lover-api's src/catalog.rs SPEC_KEYS.
 // `hint` is a one-line example of the "raw" JSON shape that key expects when
 // status is "known" (see device-lover-api/docs/catalog-design.md section 3).
+// Colors are no longer one of these generic keys — device-form.tsx has a
+// dedicated colors section backed by the API's own `colors` field.
 export const SPEC_FIELDS: { key: string; label: string; hint: string }[] = [
   { key: "operatingSystem", label: "운영체제", hint: '{"name":"Android","version":"14","skin":"One UI 6.1"}' },
-  { key: "colors", label: "색상", hint: '[{"name":"블랙","exclusive":false}]' },
   { key: "dimensions", label: "크기", hint: '{"heightMm":147,"widthMm":70.6,"depthMm":7.6}' },
   { key: "weight", label: "무게", hint: "167" },
   { key: "storage", label: "저장 용량", hint: '{"optionsGb":[256,512]}' },

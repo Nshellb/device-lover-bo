@@ -15,6 +15,7 @@ type SpecFieldState = { status: string; value: string; detail: string; rawText: 
 type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
 type ConfigFieldState = { label: string; storageGb: string; ramGb: string; ramStatus: string };
+type ColorFieldState = { name: string; imageUrl: string; colorCode: string; exclusive: boolean };
 
 type FormState = {
   brandSlug: string;
@@ -29,6 +30,7 @@ type FormState = {
   aliases: AliasFieldState[];
   sources: SourceFieldState[];
   configurations: ConfigFieldState[];
+  colors: ColorFieldState[];
   specs: Record<string, SpecFieldState>;
 };
 
@@ -55,6 +57,7 @@ function emptyForm(): FormState {
     aliases: [],
     sources: [],
     configurations: [],
+    colors: [],
     specs: emptySpecs(),
   };
 }
@@ -104,6 +107,12 @@ function fromDevice(device: ApiDeviceDetail): FormState {
       ramGb: config.ramGb != null ? String(config.ramGb) : "",
       ramStatus: config.ramStatus,
     })),
+    colors: device.colors.map((color) => ({
+      name: color.name,
+      imageUrl: color.imageUrl ?? "",
+      colorCode: color.colorCode ?? "",
+      exclusive: color.exclusive,
+    })),
     specs,
   };
 }
@@ -151,6 +160,24 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     configurations.push({ label: config.label, storageGb, ramGb, ramStatus: config.ramStatus });
   }
 
+  const colors = [];
+  const seenColorNames = new Set<string>();
+  for (const color of form.colors) {
+    if (!color.name.trim()) {
+      return { error: "색상의 이름을 입력해주세요." };
+    }
+    if (seenColorNames.has(color.name)) {
+      return { error: `색상 이름이 중복되었습니다: ${color.name}` };
+    }
+    seenColorNames.add(color.name);
+    colors.push({
+      name: color.name,
+      imageUrl: color.imageUrl || null,
+      colorCode: color.colorCode || null,
+      exclusive: color.exclusive,
+    });
+  }
+
   const sources = form.sources.map((source) => ({
     url: source.url,
     title: source.title,
@@ -179,6 +206,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       })),
       sources,
       configurations,
+      colors,
       specs,
     },
   };
@@ -532,6 +560,79 @@ export function DeviceForm({
                 <option key={status} value={status}>{SPEC_STATUS_LABELS[status]}</option>
               ))}
             </select>
+          </div>
+        )}
+      />
+
+      <ListSection
+        title="색상"
+        items={form.colors}
+        onAdd={() =>
+          setForm({
+            ...form,
+            colors: [...form.colors, { name: "", imageUrl: "", colorCode: "", exclusive: false }],
+          })
+        }
+        onRemove={(index) => setForm({ ...form, colors: form.colors.filter((_, i) => i !== index) })}
+        renderItem={(color, index) => (
+          <div className="grid flex-1 grid-cols-[1fr_2fr_140px_auto] gap-2">
+            <input
+              className={inputClass}
+              value={color.name}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  colors: form.colors.map((c, i) => (i === index ? { ...c, name: e.target.value } : c)),
+                })
+              }
+              placeholder="사파이어 블루"
+            />
+            <input
+              className={inputClass}
+              value={color.imageUrl}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  colors: form.colors.map((c, i) => (i === index ? { ...c, imageUrl: e.target.value } : c)),
+                })
+              }
+              placeholder="https://... (색상별 이미지 URL)"
+            />
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="h-6 w-6 shrink-0 rounded-full border border-zinc-300 dark:border-zinc-600"
+                style={{ backgroundColor: color.colorCode || "transparent" }}
+              />
+              <input
+                className={inputClass}
+                value={color.colorCode}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    colors: form.colors.map((c, i) =>
+                      i === index ? { ...c, colorCode: e.target.value } : c,
+                    ),
+                  })
+                }
+                placeholder="#FFD700"
+              />
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={color.exclusive}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    colors: form.colors.map((c, i) =>
+                      i === index ? { ...c, exclusive: e.target.checked } : c,
+                    ),
+                  })
+                }
+              />
+              단독 색상
+            </label>
           </div>
         )}
       />
