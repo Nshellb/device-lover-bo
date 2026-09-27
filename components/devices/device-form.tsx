@@ -323,7 +323,7 @@ export function DeviceForm({
               className={inputClass}
               value={form.variant}
               onChange={(e) => setForm({ ...form, variant: e.target.value })}
-              placeholder="12GB · 512GB"
+              placeholder="12GB, 512GB"
             />
           </div>
           <div>
@@ -483,7 +483,7 @@ export function DeviceForm({
                   ),
                 })
               }
-              placeholder="12GB · 512GB"
+              placeholder="12GB, 512GB"
             />
             <input
               type="number"
