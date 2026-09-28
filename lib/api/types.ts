@@ -5,7 +5,6 @@ export type ApiSpecStatus = "known" | "unknown" | "not_disclosed" | "not_applica
 
 export type ApiSpecValue = {
   status: ApiSpecStatus;
-  raw: unknown;
   value: string;
   detail: string | null;
   muted: boolean;
@@ -162,7 +161,6 @@ export type ApiCameraWriteRequest = {
 
 export type ApiSpecInput = {
   status: ApiSpecStatus;
-  raw: unknown;
   value: string;
   detail: string | null;
 };

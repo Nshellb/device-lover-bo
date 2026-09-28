@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
-import { SPEC_FIELDS, SPEC_STATUSES, SPEC_STATUS_LABELS } from "@/lib/spec-labels";
+import { SPEC_FIELDS, SPEC_FORM_ORDER, SPEC_STATUSES, SPEC_STATUS_LABELS } from "@/lib/spec-labels";
 import type {
   ApiAdminBrand,
   ApiDeviceDetail,
@@ -14,7 +14,10 @@ import type {
   ApiSpecInput,
 } from "@/lib/api/types";
 
-type SpecFieldState = { status: string; value: string; detail: string; rawText: string };
+const SPEC_FIELDS_BY_KEY = new Map(SPEC_FIELDS.map((field) => [field.key, field]));
+const SPEC_FORM_FIELDS = SPEC_FORM_ORDER.map((key) => SPEC_FIELDS_BY_KEY.get(key)!);
+
+type SpecFieldState = { status: string; value: string; detail: string };
 type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
 type ConfigFieldState = { label: string; storageGb: string; ramGb: string; ramStatus: string };
@@ -40,7 +43,7 @@ function emptySpecs(): Record<string, SpecFieldState> {
   return Object.fromEntries(
     SPEC_FIELDS.map(({ key }) => [
       key,
-      { status: "unknown", value: "정보 없음", detail: "", rawText: "" },
+      { status: "unknown", value: "정보 없음", detail: "" },
     ]),
   );
 }
@@ -81,7 +84,6 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       status: spec.status,
       value: spec.value,
       detail: spec.detail ?? "",
-      rawText: spec.raw != null ? JSON.stringify(spec.raw) : "",
     };
   }
 
@@ -122,18 +124,6 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
 
   for (const { key, label } of SPEC_FIELDS) {
     const field = form.specs[key];
-    let raw: unknown = null;
-
-    if (field.status === "known") {
-      if (!field.rawText.trim()) {
-        return { error: `${label}: 상태가 '정보 있음'인 사양은 원시 데이터(JSON)가 필요합니다.` };
-      }
-      try {
-        raw = JSON.parse(field.rawText);
-      } catch {
-        return { error: `${label}: 원시 데이터가 올바른 JSON 형식이 아닙니다.` };
-      }
-    }
 
     if (!field.value.trim()) {
       return { error: `${label}: 표시값을 입력해주세요.` };
@@ -141,7 +131,6 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
 
     specs[key] = {
       status: field.status as ApiSpecInput["status"],
-      raw,
       value: field.value,
       detail: field.detail || null,
     };
@@ -698,13 +687,13 @@ export function DeviceForm({
 
       <section className={sectionClass}>
         <h2 className="mb-3 text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-          사양 ({SPEC_FIELDS.length}개, 전부 필수)
+          사양 ({SPEC_FORM_FIELDS.length}개, 전부 필수)
         </h2>
         <div className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
-          {SPEC_FIELDS.map(({ key, label, hint }) => {
+          {SPEC_FORM_FIELDS.map(({ key, label }) => {
             const field = form.specs[key];
             return (
-              <div key={key} className="grid grid-cols-[110px_120px_1fr_1fr] items-start gap-2 py-2.5">
+              <div key={key} className="grid grid-cols-[110px_120px_1fr] items-start gap-2 py-2.5">
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
                 <select
                   className={inputClass}
@@ -746,18 +735,6 @@ export function DeviceForm({
                     placeholder="detail (선택)"
                   />
                 </div>
-                <textarea
-                  className={`${inputClass} h-[62px] resize-none font-mono text-xs disabled:opacity-40`}
-                  value={field.rawText}
-                  disabled={field.status !== "known"}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      specs: { ...form.specs, [key]: { ...field, rawText: e.target.value } },
-                    })
-                  }
-                  placeholder={hint}
-                />
               </div>
             );
           })}
