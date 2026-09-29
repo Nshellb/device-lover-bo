@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 
 import { DeviceDetailModal } from "@/components/devices/device-detail-modal";
@@ -35,7 +34,12 @@ export function DeviceTable({ devices }: { devices: ApiDeviceSummary[] }) {
               <tr key={device.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                 <td className="px-4 py-2.5">
                   {device.imageUrl ? (
-                    <Image
+                    // Admin-entered imageUrl has no host restriction (see BO's
+                    // device form), so it won't generally match next.config.ts's
+                    // images.remotePatterns allowlist — plain <img> instead of
+                    // next/image avoids that hostname check.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
                       src={device.imageUrl}
                       alt=""
                       width={36}
