@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
 import type { ApiAdminBrand, ApiCamera, ApiCameraWriteRequest } from "@/lib/api/types";
@@ -176,6 +176,10 @@ export function CameraForm({
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmingPayload, setConfirmingPayload] = useState<ApiCameraWriteRequest | null>(null);
+
+  useEffect(() => {
+    if (error) window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [error]);
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

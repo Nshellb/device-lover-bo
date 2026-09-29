@@ -1,3 +1,4 @@
+import { toKoreanErrorMessage } from "@/lib/api/error-messages";
 import type {
   ApiAdminBrand,
   ApiAdminDeviceSearchField,
@@ -93,7 +94,7 @@ async function throwApiRequestError(path: string, response: Response): Promise<n
     // Non-JSON error body (e.g. 408 timeout) — keep the default message.
   }
 
-  throw new ApiRequestError(response.status, code, message);
+  throw new ApiRequestError(response.status, code, toKoreanErrorMessage(code, message));
 }
 
 export async function listDevices(params: { page?: number; pageSize?: number } = {}): Promise<ApiDeviceListResponse> {

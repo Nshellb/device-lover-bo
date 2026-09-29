@@ -8,7 +8,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const camera = await getAdminCameraById(id);
     if (!camera) {
       return Response.json(
-        { error: { code: "not_found", message: "resource not found" } },
+        { error: { code: "not_found", message: "요청한 항목을 찾을 수 없습니다." } },
         { status: 404 },
       );
     }

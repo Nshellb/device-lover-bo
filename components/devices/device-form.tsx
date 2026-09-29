@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
 import { SPEC_FIELDS, SPEC_FORM_ORDER, SPEC_STATUSES, SPEC_STATUS_LABELS } from "@/lib/spec-labels";
@@ -234,6 +234,10 @@ export function DeviceForm({
   const [toast, setToast] = useState<string | null>(null);
   const [confirmingPayload, setConfirmingPayload] = useState<ApiDeviceWriteRequest | null>(null);
 
+  useEffect(() => {
+    if (error) window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [error]);
+
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -431,7 +435,7 @@ export function DeviceForm({
           setForm({ ...form, aliases: form.aliases.filter((_, i) => i !== index) })
         }
         renderItem={(alias, index) => (
-          <>
+          <div className="grid flex-1 grid-cols-[1fr_auto] gap-2">
             <input
               className={inputClass}
               value={alias.value}
@@ -444,7 +448,7 @@ export function DeviceForm({
               placeholder="SM-S921"
             />
             <select
-              className={`${inputClass} w-48 shrink-0`}
+              className={`${inputClass} w-48`}
               value={alias.kind}
               onChange={(e) =>
                 setForm({
@@ -457,7 +461,7 @@ export function DeviceForm({
               <option value="hardware_identifier">hardware_identifier</option>
               <option value="alias">alias</option>
             </select>
-          </>
+          </div>
         )}
       />
 
