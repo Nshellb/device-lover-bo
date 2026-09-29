@@ -32,6 +32,10 @@ export const metadata: Metadata = {
     template: "%s | Device Lover BO",
   },
   description: "Device Lover 운영 관리 콘솔",
+  icons: {
+    icon: "/device-lover-logo.svg",
+    shortcut: "/device-lover-logo.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
