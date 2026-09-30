@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
-import { SPEC_FIELDS, SPEC_FORM_ORDER, SPEC_STATUSES, SPEC_STATUS_LABELS } from "@/lib/spec-labels";
+import { SPEC_FIELDS, SPEC_SECTIONS } from "@/lib/spec-labels";
 import type {
   ApiAdminBrand,
   ApiDeviceDetail,
@@ -15,12 +15,16 @@ import type {
 } from "@/lib/api/types";
 
 const SPEC_FIELDS_BY_KEY = new Map(SPEC_FIELDS.map((field) => [field.key, field]));
-const SPEC_FORM_FIELDS = SPEC_FORM_ORDER.map((key) => SPEC_FIELDS_BY_KEY.get(key)!);
+const SPEC_FORM_SECTIONS = SPEC_SECTIONS.map(({ title, keys }) => ({
+  title,
+  fields: keys.map((key) => SPEC_FIELDS_BY_KEY.get(key)!),
+}));
+const SPEC_FORM_COUNT = SPEC_FORM_SECTIONS.reduce((sum, section) => sum + section.fields.length, 0);
 
-type SpecFieldState = { status: string; value: string; detail: string };
+type SpecFieldState = { value: string; detail: string; parts?: string[] };
 type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
-type ConfigFieldState = { label: string; storageGb: string; ramGb: string; ramStatus: string };
+type ConfigFieldState = { label: string; storageGb: string; ramGb: string };
 type ColorFieldState = { name: string; imageUrl: string; colorCode: string; exclusive: boolean };
 
 type FormState = {
@@ -39,11 +43,127 @@ type FormState = {
   specs: Record<string, SpecFieldState>;
 };
 
+// displaySize is entered as two fields, stored as value "6.3인치" and
+// detail "19.5:9 비율". In form state `value` holds the inches and `detail`
+// the ratio, without those suffixes.
+const DISPLAY_SIZE_KEY = "displaySize";
+// dimensions is entered as width/height/depth (form state `parts`), stored as
+// "146.7 × 71.5 × 7.65 mm"; weight is entered as a number, stored as "177 g".
+const DIMENSIONS_KEY = "dimensions";
+const WEIGHT_KEY = "weight";
+const DIMENSION_LABELS = ["가로", "세로", "두께"];
+
+function parseDimensions(spec: { value: string; detail: string | null }): SpecFieldState {
+  const numbers = spec.value.match(/\d+(?:\.\d+)?/g) ?? [];
+  return {
+    value: "",
+    detail: spec.detail ?? "",
+    parts: DIMENSION_LABELS.map((_, i) => numbers[i] ?? ""),
+  };
+}
+
+function parseWeight(spec: { value: string; detail: string | null }): SpecFieldState {
+  return { value: spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "", detail: spec.detail ?? "" };
+}
+
+// waterResistance is entered as the two IP digits (form state `parts`: dust,
+// water), stored as "IP68". An empty digit is stored as "X" ("IPX8"); both
+// empty stores "방수·방진 지원 안 함". The detail text stays a free-form field.
+const WATER_RESISTANCE_KEY = "waterResistance";
+const IP_LABELS = ["방진", "방수"];
+const WATER_RESISTANCE_NONE = "방수·방진 지원 안 함";
+
+function parseWaterResistance(spec: { value: string; detail: string | null }): SpecFieldState {
+  const digits = spec.value.match(/IP(\d|X)(\d|X)/i);
+  const digit = (raw?: string) => (raw && /\d/.test(raw) ? raw : "");
+  return { value: "", detail: spec.detail ?? "", parts: [digit(digits?.[1]), digit(digits?.[2])] };
+}
+
+// speakers is entered as a type dropdown plus a count (form state `parts`: type,
+// count), stored as "스테레오 2개" / "모노 1개" / "스피커 없음".
+const SPEAKERS_KEY = "speakers";
+const SPEAKER_TYPES = [
+  { id: "none", label: "스피커 없음" },
+  { id: "mono", label: "모노" },
+  { id: "stereo", label: "스테레오" },
+];
+
+function parseSpeakers(spec: { value: string; detail: string | null }): SpecFieldState {
+  const type = /없음/.test(spec.value)
+    ? "none"
+    : /모노/.test(spec.value)
+      ? "mono"
+      : /스테레오/.test(spec.value)
+        ? "stereo"
+        : "";
+  return {
+    value: "",
+    detail: spec.detail ?? "",
+    parts: [type, spec.value.match(/(\d+)\s*개/)?.[1] ?? ""],
+  };
+}
+
+// stylus is a dropdown; the selected label is stored as the display value.
+const STYLUS_KEY = "stylus";
+const STYLUS_OPTIONS = ["미지원", "필압 미확인", "1024단계", "2048단계", "4096단계", "8192단계"];
+
+// displayResolution is entered as width × height (form state `parts`), stored as
+// "2532 × 1170"; refreshRate as min/max (form state `parts`), stored as "60Hz"
+// when equal or "1~120Hz" for a range. Empty input is stored as "미확인".
+const RESOLUTION_KEY = "displayResolution";
+const REFRESH_RATE_KEY = "refreshRate";
+const RESOLUTION_LABELS = ["가로", "세로"];
+const REFRESH_RATE_LABELS = ["최소", "최대"];
+const UNCONFIRMED = "미확인";
+
+function parseResolution(spec: { value: string; detail: string | null }): SpecFieldState {
+  const numbers = spec.value.match(/\d+/g) ?? [];
+  return { value: "", detail: spec.detail ?? "", parts: [numbers[0] ?? "", numbers[1] ?? ""] };
+}
+
+function parseRefreshRate(spec: { value: string; detail: string | null }): SpecFieldState {
+  const numbers = spec.value.match(/\d+(?:\.\d+)?/g) ?? [];
+  return {
+    value: "",
+    detail: spec.detail ?? "",
+    parts: [numbers[0] ?? "", numbers[1] ?? numbers[0] ?? ""],
+  };
+}
+
+// wiredConnection is a dropdown of common ports plus "그외" with a free-text
+// value (form state `parts`: option, custom text).
+const WIRED_KEY = "wiredConnection";
+const WIRED_OPTIONS = ["USB Type-C", "Lightning", "micro-USB", "Apple 30-pin"];
+const WIRED_OTHER = "그외";
+
+function parseWiredConnection(spec: { value: string; detail: string | null }): SpecFieldState {
+  const known = WIRED_OPTIONS.includes(spec.value);
+  return {
+    value: "",
+    detail: spec.detail ?? "",
+    parts: known ? [spec.value, ""] : [spec.value ? WIRED_OTHER : "", spec.value],
+  };
+}
+
+const RATIO_PATTERN = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/;
+
+function parseDisplaySize(spec: { value: string; detail: string | null }): SpecFieldState {
+  const inches = spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "";
+  const ratio = `${spec.detail ?? ""} ${spec.value}`.match(/\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/)?.[0];
+  return { value: inches, detail: ratio ? ratio.replace(/\s+/g, "") : "" };
+}
+
 function emptySpecs(): Record<string, SpecFieldState> {
   return Object.fromEntries(
     SPEC_FIELDS.map(({ key }) => [
       key,
-      { status: "unknown", value: "정보 없음", detail: "" },
+      key === DIMENSIONS_KEY
+        ? { value: "", detail: "", parts: DIMENSION_LABELS.map(() => "") }
+        : key === SPEAKERS_KEY || key === RESOLUTION_KEY || key === REFRESH_RATE_KEY || key === WIRED_KEY
+        ? { value: "", detail: "", parts: ["", ""] }
+        : key === WATER_RESISTANCE_KEY
+        ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
+        : { value: key === DISPLAY_SIZE_KEY || key === WEIGHT_KEY ? "" : key === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
     ]),
   );
 }
@@ -80,8 +200,39 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
   for (const { key } of SPEC_FIELDS) {
     const spec = device.specs[key];
     if (!spec) continue;
+    if (key === DISPLAY_SIZE_KEY) {
+      specs[key] = parseDisplaySize(spec);
+      continue;
+    }
+    if (key === DIMENSIONS_KEY) {
+      specs[key] = parseDimensions(spec);
+      continue;
+    }
+    if (key === WEIGHT_KEY) {
+      specs[key] = parseWeight(spec);
+      continue;
+    }
+    if (key === WATER_RESISTANCE_KEY) {
+      specs[key] = parseWaterResistance(spec);
+      continue;
+    }
+    if (key === SPEAKERS_KEY) {
+      specs[key] = parseSpeakers(spec);
+      continue;
+    }
+    if (key === WIRED_KEY) {
+      specs[key] = parseWiredConnection(spec);
+      continue;
+    }
+    if (key === RESOLUTION_KEY) {
+      specs[key] = parseResolution(spec);
+      continue;
+    }
+    if (key === REFRESH_RATE_KEY) {
+      specs[key] = parseRefreshRate(spec);
+      continue;
+    }
     specs[key] = {
-      status: spec.status,
       value: spec.value,
       detail: spec.detail ?? "",
     };
@@ -107,7 +258,6 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       label: config.label,
       storageGb: String(config.storageGb),
       ramGb: config.ramGb != null ? String(config.ramGb) : "",
-      ramStatus: config.ramStatus,
     })),
     colors: device.colors.map((color) => ({
       name: color.name,
@@ -125,12 +275,111 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
   for (const { key, label } of SPEC_FIELDS) {
     const field = form.specs[key];
 
+    if (key === DISPLAY_SIZE_KEY) {
+      const inches = Number(field.value);
+      if (!field.value.trim() || !Number.isFinite(inches) || inches <= 0) {
+        return { error: `${label}: 인치를 0보다 큰 숫자로 입력해주세요.` };
+      }
+      if (!RATIO_PATTERN.test(field.detail.trim())) {
+        return { error: `${label}: 비율을 19.5:9 형식으로 입력해주세요.` };
+      }
+      specs[key] = { value: `${field.value.trim()}인치`, detail: `${field.detail.trim()} 비율` };
+      continue;
+    }
+
+    if (key === DIMENSIONS_KEY) {
+      const parts = (field.parts ?? []).map((part) => part.trim());
+      if (parts.length !== DIMENSION_LABELS.length || parts.some((part) => !(Number(part) > 0))) {
+        return { error: `${label}: 가로·세로·두께를 0보다 큰 숫자로 입력해주세요.` };
+      }
+      specs[key] = { value: `${parts.join(" × ")} mm`, detail: field.detail || null };
+      continue;
+    }
+
+    if (key === WIRED_KEY) {
+      const [option = "", custom = ""] = field.parts ?? [];
+      if (!option) return { error: `${label}: 단자 종류를 선택해주세요.` };
+      if (option === WIRED_OTHER && !custom.trim()) {
+        return { error: `${label}: '그외'를 선택하면 단자 이름을 입력해주세요.` };
+      }
+      specs[key] = {
+        value: option === WIRED_OTHER ? custom.trim() : option,
+        detail: field.detail || null,
+      };
+      continue;
+    }
+
+    if (key === RESOLUTION_KEY) {
+      const [width = "", height = ""] = (field.parts ?? []).map((part) => part.trim());
+      if (!width && !height) {
+        specs[key] = { value: UNCONFIRMED, detail: field.detail || null };
+        continue;
+      }
+      if (!/^[1-9]\d*$/.test(width) || !/^[1-9]\d*$/.test(height)) {
+        return { error: `${label}: 가로·세로를 모두 정수로 입력하거나, 모르면 모두 비워주세요.` };
+      }
+      specs[key] = { value: `${width} × ${height}`, detail: field.detail || null };
+      continue;
+    }
+
+    if (key === REFRESH_RATE_KEY) {
+      const [rawMin = "", rawMax = ""] = (field.parts ?? []).map((part) => part.trim());
+      if (!rawMin && !rawMax) {
+        specs[key] = { value: UNCONFIRMED, detail: field.detail || null };
+        continue;
+      }
+      const min = Number(rawMin || rawMax);
+      const max = Number(rawMax || rawMin);
+      if (!(min > 0) || !(max > 0)) {
+        return { error: `${label}: 주사율을 0보다 큰 숫자로 입력해주세요.` };
+      }
+      if (min > max) {
+        return { error: `${label}: 최소 주사율이 최대보다 클 수 없습니다.` };
+      }
+      specs[key] = {
+        value: min === max ? `${min}Hz` : `${min}~${max}Hz`,
+        detail: field.detail || null,
+      };
+      continue;
+    }
+
+    if (key === SPEAKERS_KEY) {
+      const [typeId = "", count = ""] = field.parts ?? [];
+      const type = SPEAKER_TYPES.find((item) => item.id === typeId);
+      if (!type) return { error: `${label}: 스피커 종류를 선택해주세요.` };
+      if (type.id === "none") {
+        specs[key] = { value: type.label, detail: field.detail || null };
+        continue;
+      }
+      if (!/^[1-9]\d*$/.test(count.trim())) {
+        return { error: `${label}: 스피커 개수를 1 이상의 정수로 입력해주세요.` };
+      }
+      specs[key] = { value: `${type.label} ${count.trim()}개`, detail: field.detail || null };
+      continue;
+    }
+
+    if (key === WATER_RESISTANCE_KEY) {
+      const [dust = "", water = ""] = (field.parts ?? []).map((part) => part.trim());
+      specs[key] = {
+        value: dust || water ? `IP${dust || "X"}${water || "X"}` : WATER_RESISTANCE_NONE,
+        detail: field.detail || null,
+      };
+      continue;
+    }
+
+    if (key === WEIGHT_KEY) {
+      if (!(Number(field.value) > 0)) {
+        return { error: `${label}: 무게(g)를 0보다 큰 숫자로 입력해주세요.` };
+      }
+      specs[key] = { value: `${field.value.trim()} g`, detail: field.detail || null };
+      continue;
+    }
+
     if (!field.value.trim()) {
       return { error: `${label}: 표시값을 입력해주세요.` };
     }
 
     specs[key] = {
-      status: field.status as ApiSpecInput["status"],
       value: field.value,
       detail: field.detail || null,
     };
@@ -142,11 +391,11 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     if (!config.label.trim() || !Number.isFinite(storageGb) || storageGb <= 0) {
       return { error: "구성 항목의 라벨과 저장 용량(GB)을 확인해주세요." };
     }
-    const ramGb = config.ramStatus === "known" ? Number(config.ramGb) : null;
-    if (config.ramStatus === "known" && (!Number.isFinite(ramGb) || (ramGb ?? 0) <= 0)) {
-      return { error: "RAM 상태가 '정보 있음'이면 RAM 용량(GB)이 필요합니다." };
+    const ramGb = config.ramGb.trim() ? Number(config.ramGb) : null;
+    if (ramGb !== null && (!Number.isFinite(ramGb) || ramGb <= 0)) {
+      return { error: "RAM 용량(GB)은 0보다 큰 숫자여야 합니다." };
     }
-    configurations.push({ label: config.label, storageGb, ramGb, ramStatus: config.ramStatus });
+    configurations.push({ label: config.label, storageGb, ramGb });
   }
 
   const colors = [];
@@ -300,6 +549,8 @@ export function DeviceForm({
       window.setTimeout(() => {
         router.push(`/devices/${saved.id}/edit`);
         router.refresh();
+        setSubmitting(false);
+        setToast(null);
       }, 900);
     } catch {
       setError("저장하지 못했습니다. 네트워크 상태를 확인해주세요.");
@@ -407,7 +658,7 @@ export function DeviceForm({
             />
           </div>
           <div>
-            <label className={labelClass}>이미지 URL</label>
+            <label className={labelClass}>대표 이미지 URL (색상 미선택 시 표시)</label>
             <input
               className={inputClass}
               value={form.imageUrl}
@@ -543,7 +794,7 @@ export function DeviceForm({
             ...form,
             configurations: [
               ...form.configurations,
-              { label: "", storageGb: "", ramGb: "", ramStatus: "known" },
+              { label: "", storageGb: "", ramGb: "" },
             ],
           })
         }
@@ -585,7 +836,6 @@ export function DeviceForm({
               min={1}
               className={`${inputClass} w-24`}
               value={config.ramGb}
-              disabled={config.ramStatus !== "known"}
               onChange={(e) =>
                 setForm({
                   ...form,
@@ -596,22 +846,6 @@ export function DeviceForm({
               }
               placeholder="RAM GB"
             />
-            <select
-              className={`${inputClass} w-36`}
-              value={config.ramStatus}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  configurations: form.configurations.map((c, i) =>
-                    i === index ? { ...c, ramStatus: e.target.value } : c,
-                  ),
-                })
-              }
-            >
-              {SPEC_STATUSES.filter((status) => status !== "not_applicable").map((status) => (
-                <option key={status} value={status}>{SPEC_STATUS_LABELS[status]}</option>
-              ))}
-            </select>
           </div>
         )}
       />
@@ -691,30 +925,329 @@ export function DeviceForm({
 
       <section className={sectionClass}>
         <h2 className="mb-3 text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-          사양 ({SPEC_FORM_FIELDS.length}개, 전부 필수)
+          사양 ({SPEC_FORM_COUNT}개, 전부 필수)
         </h2>
-        <div className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
-          {SPEC_FORM_FIELDS.map(({ key, label }) => {
+        <div className="flex flex-col gap-8">
+          {SPEC_FORM_SECTIONS.map((section) => (
+            <div key={section.title}>
+              <div className="mb-1 flex items-baseline justify-between border-b-2 border-zinc-300 pb-2 dark:border-zinc-600">
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
+                  {section.title}
+                </h3>
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">{section.fields.length}개</span>
+              </div>
+              <div className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
+          {section.fields.map(({ key, label }) => {
             const field = form.specs[key];
             return (
-              <div key={key} className="grid grid-cols-[110px_120px_1fr] items-start gap-2 py-2.5">
+              <div key={key} className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
-                <select
-                  className={inputClass}
-                  value={field.status}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      specs: { ...form.specs, [key]: { ...field, status: e.target.value } },
-                    })
-                  }
-                >
-                  {SPEC_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {SPEC_STATUS_LABELS[status]}
-                    </option>
-                  ))}
-                </select>
+                {key === DIMENSIONS_KEY ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {DIMENSION_LABELS.map((partLabel, partIndex) => (
+                      <div key={partLabel} className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          className={inputClass}
+                          value={field.parts?.[partIndex] ?? ""}
+                          onChange={(e) => {
+                            const parts = DIMENSION_LABELS.map((_, i) => field.parts?.[i] ?? "");
+                            parts[partIndex] = e.target.value;
+                            setForm({
+                              ...form,
+                              specs: { ...form.specs, [key]: { ...field, parts } },
+                            });
+                          }}
+                          placeholder={partLabel}
+                        />
+                        <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                          {partIndex === DIMENSION_LABELS.length - 1 ? "mm" : "×"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : key === WIRED_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className={`${inputClass} w-40`}
+                        value={field.parts?.[0] ?? ""}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [e.target.value, field.parts?.[1] ?? ""] },
+                            },
+                          })
+                        }
+                      >
+                        <option value="" disabled>
+                          선택
+                        </option>
+                        {[...WIRED_OPTIONS, WIRED_OTHER].map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      {field.parts?.[0] === WIRED_OTHER ? (
+                        <input
+                          className={inputClass}
+                          value={field.parts?.[1] ?? ""}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              specs: {
+                                ...form.specs,
+                                [key]: { ...field, parts: [WIRED_OTHER, e.target.value] },
+                              },
+                            })
+                          }
+                          placeholder="단자 이름 (예: Mini-USB)"
+                        />
+                      ) : null}
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : key === RESOLUTION_KEY || key === REFRESH_RATE_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      {(key === RESOLUTION_KEY ? RESOLUTION_LABELS : REFRESH_RATE_LABELS).map(
+                        (partLabel, partIndex) => (
+                          <div key={partLabel} className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              step={key === RESOLUTION_KEY ? 1 : "any"}
+                              className={`${inputClass} w-28`}
+                              value={field.parts?.[partIndex] ?? ""}
+                              onChange={(e) => {
+                                const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? ""];
+                                parts[partIndex] = e.target.value;
+                                setForm({
+                                  ...form,
+                                  specs: { ...form.specs, [key]: { ...field, parts } },
+                                });
+                              }}
+                              placeholder={partLabel}
+                            />
+                            <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                              {partIndex === 0 ? (key === RESOLUTION_KEY ? "×" : "~") : key === RESOLUTION_KEY ? "px" : "Hz"}
+                            </span>
+                          </div>
+                        ),
+                      )}
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {key === REFRESH_RATE_KEY ? "같으면 한 값으로 표시, " : ""}비우면 미확인
+                      </span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : key === STYLUS_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <select
+                      className={`${inputClass} w-44`}
+                      value={field.value}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                        })
+                      }
+                    >
+                      {!STYLUS_OPTIONS.includes(field.value) ? (
+                        <option value={field.value} disabled>
+                          {field.value || "선택"}
+                        </option>
+                      ) : null}
+                      {STYLUS_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : key === SPEAKERS_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className={`${inputClass} w-36`}
+                        value={field.parts?.[0] ?? ""}
+                        onChange={(e) => {
+                          const type = e.target.value;
+                          const count = type === "none" ? "" : (field.parts?.[1] ?? "");
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, parts: [type, count] } },
+                          });
+                        }}
+                      >
+                        <option value="" disabled>
+                          선택
+                        </option>
+                        {SPEAKER_TYPES.map((type) => (
+                          <option key={type.id} value={type.id}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        className={`${inputClass} w-20`}
+                        value={field.parts?.[1] ?? ""}
+                        disabled={(field.parts?.[0] ?? "") === "none"}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
+                            },
+                          })
+                        }
+                        placeholder="2"
+                      />
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">개</span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : key === WATER_RESISTANCE_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">IP</span>
+                      {IP_LABELS.map((partLabel, partIndex) => (
+                        <input
+                          key={partLabel}
+                          inputMode="numeric"
+                          maxLength={1}
+                          className={`${inputClass} w-16 text-center`}
+                          value={field.parts?.[partIndex] ?? ""}
+                          onChange={(e) => {
+                            const parts = IP_LABELS.map((_, i) => field.parts?.[i] ?? "");
+                            parts[partIndex] = e.target.value.replace(/\D/g, "").slice(0, 1);
+                            setForm({
+                              ...form,
+                              specs: { ...form.specs, [key]: { ...field, parts } },
+                            });
+                          }}
+                          placeholder={partLabel}
+                        />
+                      ))}
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        빈칸은 X, 둘 다 비우면 지원 안 함
+                      </span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : key === WEIGHT_KEY ? (
+                  <div className="flex max-w-xs items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      className={inputClass}
+                      value={field.value}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                        })
+                      }
+                      placeholder="177"
+                    />
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">g</span>
+                  </div>
+                ) : key === DISPLAY_SIZE_KEY ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        className={inputClass}
+                        value={field.value}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                          })
+                        }
+                        placeholder="6.3"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">인치</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className={inputClass}
+                        value={field.detail}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                          })
+                        }
+                        placeholder="19.5:9"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">비율</span>
+                    </div>
+                  </div>
+                ) : (
                 <div className="flex flex-col gap-1">
                   <input
                     className={inputClass}
@@ -739,9 +1272,13 @@ export function DeviceForm({
                     placeholder="detail (선택)"
                   />
                 </div>
+                )}
               </div>
             );
           })}
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

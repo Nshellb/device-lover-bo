@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { ApiDeviceDetail } from "@/lib/api/types";
-import { SPEC_FIELDS } from "@/lib/spec-labels";
+import { SPEC_FIELDS, SPEC_SECTIONS } from "@/lib/spec-labels";
+
+const SPEC_LABELS = Object.fromEntries(SPEC_FIELDS.map(({ key, label }) => [key, label]));
 
 const PUBLICATION_STATUS_LABELS: Record<string, string> = {
   draft: "초안",
@@ -163,32 +165,41 @@ function DeviceDetailContent({
         <h3 className="mb-2 mt-6 text-xs font-semibold tracking-wide text-zinc-500 dark:text-zinc-400">
           사양 ({Object.keys(device.specs).length}개)
         </h3>
-        <dl className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
-          {SPEC_FIELDS.map(({ key, label }) => {
-            const spec = device.specs[key];
-            if (!spec) return null;
+        {SPEC_SECTIONS.map((section) => {
+          const rows = section.keys.filter((key) => device.specs[key]);
+          if (rows.length === 0) return null;
 
-            return (
-              <div key={key} className="grid grid-cols-[120px_1fr] gap-3 py-2">
-                <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
-                <dd
-                  className={
-                    spec.muted
-                      ? "text-zinc-400 dark:text-zinc-500"
-                      : "text-zinc-900 dark:text-zinc-100"
-                  }
-                >
-                  {spec.value}
-                  {spec.detail ? (
-                    <span className="ml-1 text-xs text-zinc-400 dark:text-zinc-500">
-                      ({spec.detail})
-                    </span>
-                  ) : null}
-                </dd>
+          return (
+            <div key={section.title} className="mb-6">
+              <div className="mb-1 flex items-baseline justify-between border-b-2 border-zinc-300 pb-2 dark:border-zinc-600">
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
+                  {section.title}
+                </h4>
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">{rows.length}개</span>
               </div>
-            );
-          })}
-        </dl>
+              <dl className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+                {rows.map((key) => {
+                  const spec = device.specs[key];
+                  const label = SPEC_LABELS[key];
+
+                  return (
+                    <div key={key} className="grid grid-cols-[120px_1fr] gap-3 py-2">
+                      <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
+                      <dd className="text-zinc-900 dark:text-zinc-100">
+                        {spec.value}
+                        {spec.detail ? (
+                          <span className="ml-1 text-xs text-zinc-400 dark:text-zinc-500">
+                            ({spec.detail})
+                          </span>
+                        ) : null}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

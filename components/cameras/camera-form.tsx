@@ -235,6 +235,8 @@ export function CameraForm({
       window.setTimeout(() => {
         router.push(`/cameras/${saved.id}/edit`);
         router.refresh();
+        setSubmitting(false);
+        setToast(null);
       }, 900);
     } catch {
       setError("저장하지 못했습니다. 네트워크 상태를 확인해주세요.");

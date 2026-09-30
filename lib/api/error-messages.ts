@@ -35,8 +35,7 @@ const EXACT: Record<string, string> = {
   "alias kind must be alias, model_number, or hardware_identifier":
     "별칭 종류는 별칭, 모델 번호, 하드웨어 식별자 중 하나여야 합니다.",
   "alias value must not be empty": "별칭 값은 비워둘 수 없습니다.",
-  "configuration ramGb must be present only when ramStatus is known":
-    "구성의 RAM 용량은 RAM 상태가 '확인됨'일 때만 입력해야 합니다.",
+  "configuration ramGb must be positive": "구성의 RAM 용량은 0보다 커야 합니다.",
   "configuration storageGb must be positive": "구성의 저장 용량은 0보다 커야 합니다.",
   "color name must not be empty": "색상 이름은 비워둘 수 없습니다.",
   "only one source may be marked primary": "대표 출처는 하나만 지정할 수 있습니다.",
@@ -58,7 +57,6 @@ const PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^(\w+) must be a lowercase slug$/, (m) => `${fieldLabel(m[1])}은(는) 영문 소문자, 숫자, 하이픈으로 된 슬러그여야 합니다.`],
   [/^(\w+) must not be empty$/, (m) => `${fieldLabel(m[1])}은(는) 비워둘 수 없습니다.`],
   [/^specs must include exactly the (\d+) known keys for category .+$/, (m) => `사양 항목은 정해진 ${m[1]}개 항목이 모두 있어야 합니다.`],
-  [/^spec (\w+): invalid status$/, (m) => `사양 '${specLabel(m[1])}'의 상태가 올바르지 않습니다.`],
   [/^spec (\w+): value must not be empty$/, (m) => `사양 '${specLabel(m[1])}'의 값은 비워둘 수 없습니다.`],
   [/^duplicate color name: (.+)$/, (m) => `색상 이름이 중복되었습니다: ${m[1]}`],
   [/^spec (\w+): raw must be present only when status is known$/, (m) => `사양 '${specLabel(m[1])}': 상태가 '확인됨'일 때만 세부 값(raw)을 입력할 수 있습니다. 상태가 확인됨이 아니라면 세부 값을 비워주세요.`],
