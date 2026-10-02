@@ -5,9 +5,9 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { ApiDeviceDetail } from "@/lib/api/types";
-import { SPEC_FIELDS, SPEC_SECTIONS } from "@/lib/spec-labels";
+import { SPEC_DETAIL_SECTIONS, SPEC_FIELDS, SUB_DISPLAY_FIELDS } from "@/lib/spec-labels";
 
-const SPEC_LABELS = Object.fromEntries(SPEC_FIELDS.map(({ key, label }) => [key, label]));
+const SPEC_LABELS = Object.fromEntries([...SPEC_FIELDS, ...SUB_DISPLAY_FIELDS].map(({ key, label }) => [key, label]));
 
 const PUBLICATION_STATUS_LABELS: Record<string, string> = {
   draft: "초안",
@@ -165,21 +165,39 @@ function DeviceDetailContent({
         <h3 className="mb-2 mt-6 text-xs font-semibold tracking-wide text-zinc-500 dark:text-zinc-400">
           사양 ({Object.keys(device.specs).length}개)
         </h3>
-        {SPEC_SECTIONS.map((section) => {
-          const rows = section.keys.filter((key) => device.specs[key]);
+        {SPEC_DETAIL_SECTIONS.map((section) => {
+          // dimensions is a separate structured field, shown as a spec row here.
+          const specOf = (key: string) =>
+            key === "dimensions"
+              ? device.dimensions.length > 0
+                ? {
+                    value: device.dimensions
+                      .map(
+                        (d) =>
+                          `${device.dimensions.length > 1 ? `${d.label}: ` : ""}${d.widthMm} × ${d.heightMm} × ${d.depthMm} mm`,
+                      )
+                      .join(" / "),
+                    detail: device.dimensions.map((d) => d.note).filter(Boolean).join(", ") || null,
+                  }
+                : undefined
+              : device.specs[key];
+          const rows = section.keys.filter((key) => specOf(key));
+          const title = section.sub
+            ? (device.specs[`sub${section.sub}DisplayName`]?.value ?? section.title)
+            : section.title;
           if (rows.length === 0) return null;
 
           return (
             <div key={section.title} className="mb-6">
               <div className="mb-1 flex items-baseline justify-between border-b-2 border-zinc-300 pb-2 dark:border-zinc-600">
                 <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
-                  {section.title}
+                  {title}
                 </h4>
                 <span className="text-xs text-zinc-400 dark:text-zinc-500">{rows.length}개</span>
               </div>
               <dl className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
                 {rows.map((key) => {
-                  const spec = device.specs[key];
+                  const spec = specOf(key)!;
                   const label = SPEC_LABELS[key];
 
                   return (

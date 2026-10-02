@@ -72,9 +72,18 @@ export type ApiAliasDetail = {
   kind: "alias" | "model_number" | "hardware_identifier";
 };
 
+export type ApiDimension = {
+  label: string;
+  widthMm: number;
+  heightMm: number;
+  depthMm: number;
+  note: string | null;
+};
+
 export type ApiDeviceDetail = ApiDeviceSummary & {
   variant: string | null;
   configurations: ApiDeviceConfiguration[];
+  dimensions: ApiDimension[];
   colors: ApiDeviceColor[];
   sourceUrl: string;
   sources: ApiDeviceSource[];
@@ -197,6 +206,7 @@ export type ApiDeviceWriteRequest = {
   aliases: ApiAliasInput[];
   sources: ApiSourceInput[];
   configurations: ApiConfigurationInput[];
+  dimensions: ApiDimension[];
   colors: ApiColorInput[];
   specs: Record<string, ApiSpecInput>;
 };

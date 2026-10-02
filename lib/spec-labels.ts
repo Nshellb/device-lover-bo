@@ -66,3 +66,45 @@ export const SPEC_SECTIONS: { title: string; keys: string[] }[] = [
   },
   { title: "연결과 내구성", keys: ["wireless"] },
 ];
+
+// Optional extra displays for foldables (device-lover-api's SUB_DISPLAY_KEY_GROUPS).
+// Each sub display behaves like the main one: key `sub1DisplaySize` is edited
+// like `displaySize`, `sub1RefreshRate` like `refreshRate`, and so on.
+const SUB_DISPLAY_PARTS: { suffix: string; label: string }[] = [
+  { suffix: "DisplayPanel", label: "패널" },
+  { suffix: "DisplaySize", label: "디스플레이" },
+  { suffix: "DisplayResolution", label: "해상도" },
+  { suffix: "RefreshRate", label: "주사율" },
+  { suffix: "DisplayFeatures", label: "디스플레이 기능" },
+];
+
+export const MAX_SUB_DISPLAYS = 2;
+
+// Editable name of each sub display (optional on the API; the form always sets it).
+export const subDisplayNameKey = (sub: number) => `sub${sub}DisplayName`;
+export const defaultSubDisplayName = (sub: number) => `서브${sub} 디스플레이`;
+
+export const SUB_DISPLAY_FIELDS: { key: string; label: string; sub: number }[] = [1, 2].flatMap(
+  (sub) =>
+    SUB_DISPLAY_PARTS.map(({ suffix, label }) => ({
+      key: `sub${sub}${suffix}`,
+      label: `서브${sub} ${label}`,
+      sub,
+    })),
+);
+
+// subNDisplaySize -> displaySize; plain keys are returned unchanged.
+export function specKind(key: string): string {
+  return key.replace(/^sub\d(.)/, (_, first: string) => first.toLowerCase());
+}
+
+// Sections for read-only views: SPEC_SECTIONS with the sub displays right after 디스플레이.
+export const SUB_DISPLAY_SECTIONS: { title: string; keys: string[]; sub: number }[] = [1, 2].map((sub) => ({
+  sub,
+  title: `서브${sub} 디스플레이`,
+  keys: SUB_DISPLAY_PARTS.map(({ suffix }) => `sub${sub}${suffix}`),
+}));
+
+export const SPEC_DETAIL_SECTIONS: { title: string; keys: string[]; sub?: number }[] = SPEC_SECTIONS.flatMap(
+  (section) => (section.title === "디스플레이" ? [section, ...SUB_DISPLAY_SECTIONS] : [section]),
+);

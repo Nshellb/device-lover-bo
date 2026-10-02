@@ -5,15 +5,25 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
-import { SPEC_FIELDS, SPEC_SECTIONS } from "@/lib/spec-labels";
+import {
+  MAX_SUB_DISPLAYS,
+  SPEC_FIELDS,
+  SPEC_SECTIONS,
+  SUB_DISPLAY_FIELDS,
+  defaultSubDisplayName,
+  specKind,
+  subDisplayNameKey,
+} from "@/lib/spec-labels";
 import type {
   ApiAdminBrand,
   ApiDeviceDetail,
+  ApiDimension,
   ApiDeviceWriteRequest,
   ApiPublicationStatus,
   ApiSpecInput,
 } from "@/lib/api/types";
 
+const ALL_SPEC_FIELDS = [...SPEC_FIELDS, ...SUB_DISPLAY_FIELDS];
 const SPEC_FIELDS_BY_KEY = new Map(SPEC_FIELDS.map((field) => [field.key, field]));
 const SPEC_FORM_SECTIONS = SPEC_SECTIONS.map(({ title, keys }) => ({
   title,
@@ -26,6 +36,14 @@ type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
 type ConfigFieldState = { label: string; storageGb: string; ramGb: string };
 type ColorFieldState = { name: string; imageUrl: string; colorCode: string; exclusive: boolean };
+
+type DimensionFieldState = {
+  label: string;
+  width: string;
+  height: string;
+  depth: string;
+  note: string;
+};
 
 type FormState = {
   brandId: string;
@@ -41,26 +59,22 @@ type FormState = {
   configurations: ConfigFieldState[];
   colors: ColorFieldState[];
   specs: Record<string, SpecFieldState>;
+  subDisplayCount: number;
+  dimensions: DimensionFieldState[];
 };
 
 // displaySize is entered as two fields, stored as value "6.3인치" and
 // detail "19.5:9 비율". In form state `value` holds the inches and `detail`
 // the ratio, without those suffixes.
 const DISPLAY_SIZE_KEY = "displaySize";
-// dimensions is entered as width/height/depth (form state `parts`), stored as
-// "146.7 × 71.5 × 7.65 mm"; weight is entered as a number, stored as "177 g".
+// dimensions is a separate structured field (up to 3 labelled width/height/depth
+// entries, in mm), not a spec row; the "dimensions" key only positions its editor.
 const DIMENSIONS_KEY = "dimensions";
-const WEIGHT_KEY = "weight";
-const DIMENSION_LABELS = ["가로", "세로", "두께"];
+const MAX_DIMENSIONS = 3;
+const DIMENSION_PARTS = ["width", "height", "depth"] as const;
+const DIMENSION_PART_LABELS = ["가로", "세로", "두께"];
 
-function parseDimensions(spec: { value: string; detail: string | null }): SpecFieldState {
-  const numbers = spec.value.match(/\d+(?:\.\d+)?/g) ?? [];
-  return {
-    value: "",
-    detail: spec.detail ?? "",
-    parts: DIMENSION_LABELS.map((_, i) => numbers[i] ?? ""),
-  };
-}
+const WEIGHT_KEY = "weight";
 
 function parseWeight(spec: { value: string; detail: string | null }): SpecFieldState {
   return { value: spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "", detail: spec.detail ?? "" };
@@ -154,17 +168,28 @@ function parseDisplaySize(spec: { value: string; detail: string | null }): SpecF
 }
 
 function emptySpecs(): Record<string, SpecFieldState> {
-  return Object.fromEntries(
-    SPEC_FIELDS.map(({ key }) => [
-      key,
-      key === DIMENSIONS_KEY
-        ? { value: "", detail: "", parts: DIMENSION_LABELS.map(() => "") }
-        : key === SPEAKERS_KEY || key === RESOLUTION_KEY || key === REFRESH_RATE_KEY || key === WIRED_KEY
-        ? { value: "", detail: "", parts: ["", ""] }
-        : key === WATER_RESISTANCE_KEY
-        ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
-        : { value: key === DISPLAY_SIZE_KEY || key === WEIGHT_KEY ? "" : key === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
+  return Object.fromEntries([
+    ...[1, 2].map((sub): [string, SpecFieldState] => [
+      subDisplayNameKey(sub),
+      { value: defaultSubDisplayName(sub), detail: "" },
     ]),
+    ...Object.entries(emptyFieldSpecs()),
+  ]);
+}
+
+function emptyFieldSpecs(): Record<string, SpecFieldState> {
+  return Object.fromEntries(
+    ALL_SPEC_FIELDS.map(({ key }) => {
+      const kind = specKind(key);
+      return [
+      key,
+      kind === SPEAKERS_KEY || kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY || kind === WIRED_KEY
+        ? { value: "", detail: "", parts: ["", ""] }
+        : kind === WATER_RESISTANCE_KEY
+        ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
+        : { value: key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
+    ];
+    }),
   );
 }
 
@@ -183,6 +208,8 @@ function emptyForm(): FormState {
     configurations: [],
     colors: [],
     specs: emptySpecs(),
+    subDisplayCount: 0,
+    dimensions: [{ label: "본체", width: "", height: "", depth: "", note: "" }],
   };
 }
 
@@ -197,38 +224,35 @@ function toDatetimeLocal(iso: string | null): string {
 
 function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState {
   const specs = emptySpecs();
-  for (const { key } of SPEC_FIELDS) {
+  for (const { key } of ALL_SPEC_FIELDS) {
+    const kind = specKind(key);
     const spec = device.specs[key];
     if (!spec) continue;
-    if (key === DISPLAY_SIZE_KEY) {
+    if (kind === DISPLAY_SIZE_KEY) {
       specs[key] = parseDisplaySize(spec);
       continue;
     }
-    if (key === DIMENSIONS_KEY) {
-      specs[key] = parseDimensions(spec);
-      continue;
-    }
-    if (key === WEIGHT_KEY) {
+    if (kind === WEIGHT_KEY) {
       specs[key] = parseWeight(spec);
       continue;
     }
-    if (key === WATER_RESISTANCE_KEY) {
+    if (kind === WATER_RESISTANCE_KEY) {
       specs[key] = parseWaterResistance(spec);
       continue;
     }
-    if (key === SPEAKERS_KEY) {
+    if (kind === SPEAKERS_KEY) {
       specs[key] = parseSpeakers(spec);
       continue;
     }
-    if (key === WIRED_KEY) {
+    if (kind === WIRED_KEY) {
       specs[key] = parseWiredConnection(spec);
       continue;
     }
-    if (key === RESOLUTION_KEY) {
+    if (kind === RESOLUTION_KEY) {
       specs[key] = parseResolution(spec);
       continue;
     }
-    if (key === REFRESH_RATE_KEY) {
+    if (kind === REFRESH_RATE_KEY) {
       specs[key] = parseRefreshRate(spec);
       continue;
     }
@@ -236,6 +260,11 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       value: spec.value,
       detail: spec.detail ?? "",
     };
+  }
+
+  for (const sub of [1, 2]) {
+    const name = device.specs[subDisplayNameKey(sub)]?.value;
+    if (name) specs[subDisplayNameKey(sub)] = { value: name, detail: "" };
   }
 
   return {
@@ -266,16 +295,35 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       exclusive: color.exclusive,
     })),
     specs,
+    subDisplayCount: device.specs.sub2DisplaySize ? 2 : device.specs.sub1DisplaySize ? 1 : 0,
+    dimensions: device.dimensions.map((dimension) => ({
+      label: dimension.label,
+      width: String(dimension.widthMm),
+      height: String(dimension.heightMm),
+      depth: String(dimension.depthMm),
+      note: dimension.note ?? "",
+    })),
   };
 }
 
 function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { error: string } {
   const specs: Record<string, ApiSpecInput> = {};
 
-  for (const { key, label } of SPEC_FIELDS) {
+  for (let sub = 1; sub <= form.subDisplayCount; sub++) {
+    const name = form.specs[subDisplayNameKey(sub)]?.value.trim();
+    if (!name) return { error: `서브${sub} 디스플레이: 이름을 입력해주세요.` };
+    specs[subDisplayNameKey(sub)] = { value: name, detail: null };
+  }
+
+  const specFields = [
+    ...SPEC_FIELDS,
+    ...SUB_DISPLAY_FIELDS.filter((field) => field.sub <= form.subDisplayCount),
+  ];
+  for (const { key, label } of specFields) {
+    const kind = specKind(key);
     const field = form.specs[key];
 
-    if (key === DISPLAY_SIZE_KEY) {
+    if (kind === DISPLAY_SIZE_KEY) {
       const inches = Number(field.value);
       if (!field.value.trim() || !Number.isFinite(inches) || inches <= 0) {
         return { error: `${label}: 인치를 0보다 큰 숫자로 입력해주세요.` };
@@ -287,16 +335,9 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === DIMENSIONS_KEY) {
-      const parts = (field.parts ?? []).map((part) => part.trim());
-      if (parts.length !== DIMENSION_LABELS.length || parts.some((part) => !(Number(part) > 0))) {
-        return { error: `${label}: 가로·세로·두께를 0보다 큰 숫자로 입력해주세요.` };
-      }
-      specs[key] = { value: `${parts.join(" × ")} mm`, detail: field.detail || null };
-      continue;
-    }
+    if (kind === DIMENSIONS_KEY) continue;
 
-    if (key === WIRED_KEY) {
+    if (kind === WIRED_KEY) {
       const [option = "", custom = ""] = field.parts ?? [];
       if (!option) return { error: `${label}: 단자 종류를 선택해주세요.` };
       if (option === WIRED_OTHER && !custom.trim()) {
@@ -309,7 +350,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === RESOLUTION_KEY) {
+    if (kind === RESOLUTION_KEY) {
       const [width = "", height = ""] = (field.parts ?? []).map((part) => part.trim());
       if (!width && !height) {
         specs[key] = { value: UNCONFIRMED, detail: field.detail || null };
@@ -322,7 +363,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === REFRESH_RATE_KEY) {
+    if (kind === REFRESH_RATE_KEY) {
       const [rawMin = "", rawMax = ""] = (field.parts ?? []).map((part) => part.trim());
       if (!rawMin && !rawMax) {
         specs[key] = { value: UNCONFIRMED, detail: field.detail || null };
@@ -343,7 +384,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === SPEAKERS_KEY) {
+    if (kind === SPEAKERS_KEY) {
       const [typeId = "", count = ""] = field.parts ?? [];
       const type = SPEAKER_TYPES.find((item) => item.id === typeId);
       if (!type) return { error: `${label}: 스피커 종류를 선택해주세요.` };
@@ -358,7 +399,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === WATER_RESISTANCE_KEY) {
+    if (kind === WATER_RESISTANCE_KEY) {
       const [dust = "", water = ""] = (field.parts ?? []).map((part) => part.trim());
       specs[key] = {
         value: dust || water ? `IP${dust || "X"}${water || "X"}` : WATER_RESISTANCE_NONE,
@@ -367,7 +408,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (key === WEIGHT_KEY) {
+    if (kind === WEIGHT_KEY) {
       if (!(Number(field.value) > 0)) {
         return { error: `${label}: 무게(g)를 0보다 큰 숫자로 입력해주세요.` };
       }
@@ -384,6 +425,22 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       detail: field.detail || null,
     };
   }
+
+  const dimensions: ApiDimension[] = [];
+  for (const [index, dimension] of form.dimensions.entries()) {
+    const values = DIMENSION_PARTS.map((part) => Number(dimension[part]));
+    if (!dimension.label.trim() || values.some((value) => !Number.isFinite(value) || value <= 0)) {
+      return { error: `크기 ${index + 1}: 이름과 가로·세로·두께(mm)를 0보다 큰 숫자로 입력해주세요.` };
+    }
+    dimensions.push({
+      label: dimension.label.trim(),
+      widthMm: values[0],
+      heightMm: values[1],
+      depthMm: values[2],
+      note: dimension.note.trim() || null,
+    });
+  }
+  if (dimensions.length === 0) return { error: "크기를 1개 이상 입력해주세요." };
 
   const configurations = [];
   for (const config of form.configurations) {
@@ -450,6 +507,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       })),
       sources,
       configurations,
+      dimensions,
       colors,
       specs,
     },
@@ -557,6 +615,446 @@ export function DeviceForm({
       setSubmitting(false);
     }
   }
+
+  const setDimension = (index: number, patch: Partial<DimensionFieldState>) =>
+    setForm({
+      ...form,
+      dimensions: form.dimensions.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    });
+
+  const renderDimensions = () => (
+    <div className="flex flex-col gap-2">
+      {form.dimensions.map((dimension, index) => (
+        <div key={index} className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${inputClass} w-28`}
+            value={dimension.label}
+            onChange={(e) => setDimension(index, { label: e.target.value })}
+            placeholder="이름 (본체)"
+          />
+          {DIMENSION_PARTS.map((part, partIndex) => (
+            <div key={part} className="flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={`${inputClass} w-24`}
+                value={dimension[part]}
+                onChange={(e) => setDimension(index, { [part]: e.target.value })}
+                placeholder={DIMENSION_PART_LABELS[partIndex]}
+              />
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                {partIndex === DIMENSION_PARTS.length - 1 ? "mm" : "×"}
+              </span>
+            </div>
+          ))}
+          <input
+            className={`${inputClass} w-48`}
+            value={dimension.note}
+            onChange={(e) => setDimension(index, { note: e.target.value })}
+            placeholder="메모 (선택)"
+          />
+          {form.dimensions.length > 1 ? (
+            <button
+              type="button"
+              className={removeButtonClass}
+              onClick={() =>
+                setForm({ ...form, dimensions: form.dimensions.filter((_, i) => i !== index) })
+              }
+            >
+              제거
+            </button>
+          ) : null}
+        </div>
+      ))}
+      {form.dimensions.length < MAX_DIMENSIONS ? (
+        <div>
+          <button
+            type="button"
+            className={addButtonClass}
+            onClick={() =>
+              setForm({
+                ...form,
+                dimensions: [
+                  ...form.dimensions,
+                  { label: "", width: "", height: "", depth: "", note: "" },
+                ],
+              })
+            }
+          >
+            + 크기 추가 (최대 {MAX_DIMENSIONS}개, 예: 접은 상태)
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const renderSpecRow = ({ key, label }: { key: string; label: string }) => {
+    const kind = specKind(key);
+            const field = form.specs[key];
+            return (
+              <div key={key} className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
+                <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
+                {kind === DIMENSIONS_KEY ? (
+                  renderDimensions()
+                ) : kind === WIRED_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className={`${inputClass} w-40`}
+                        value={field.parts?.[0] ?? ""}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [e.target.value, field.parts?.[1] ?? ""] },
+                            },
+                          })
+                        }
+                      >
+                        <option value="" disabled>
+                          선택
+                        </option>
+                        {[...WIRED_OPTIONS, WIRED_OTHER].map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      {field.parts?.[0] === WIRED_OTHER ? (
+                        <input
+                          className={inputClass}
+                          value={field.parts?.[1] ?? ""}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              specs: {
+                                ...form.specs,
+                                [key]: { ...field, parts: [WIRED_OTHER, e.target.value] },
+                              },
+                            })
+                          }
+                          placeholder="단자 이름 (예: Mini-USB)"
+                        />
+                      ) : null}
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      {(kind === RESOLUTION_KEY ? RESOLUTION_LABELS : REFRESH_RATE_LABELS).map(
+                        (partLabel, partIndex) => (
+                          <div key={partLabel} className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              step={kind === RESOLUTION_KEY ? 1 : "any"}
+                              className={`${inputClass} w-28`}
+                              value={field.parts?.[partIndex] ?? ""}
+                              onChange={(e) => {
+                                const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? ""];
+                                parts[partIndex] = e.target.value;
+                                setForm({
+                                  ...form,
+                                  specs: { ...form.specs, [key]: { ...field, parts } },
+                                });
+                              }}
+                              placeholder={partLabel}
+                            />
+                            <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                              {partIndex === 0 ? (kind === RESOLUTION_KEY ? "×" : "~") : kind === RESOLUTION_KEY ? "px" : "Hz"}
+                            </span>
+                          </div>
+                        ),
+                      )}
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {kind === REFRESH_RATE_KEY ? "같으면 한 값으로 표시, " : ""}비우면 미확인
+                      </span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === STYLUS_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <select
+                      className={`${inputClass} w-44`}
+                      value={field.value}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                        })
+                      }
+                    >
+                      {!STYLUS_OPTIONS.includes(field.value) ? (
+                        <option value={field.value} disabled>
+                          {field.value || "선택"}
+                        </option>
+                      ) : null}
+                      {STYLUS_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === SPEAKERS_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className={`${inputClass} w-36`}
+                        value={field.parts?.[0] ?? ""}
+                        onChange={(e) => {
+                          const type = e.target.value;
+                          const count = type === "none" ? "" : (field.parts?.[1] ?? "");
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, parts: [type, count] } },
+                          });
+                        }}
+                      >
+                        <option value="" disabled>
+                          선택
+                        </option>
+                        {SPEAKER_TYPES.map((type) => (
+                          <option key={type.id} value={type.id}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        className={`${inputClass} w-20`}
+                        value={field.parts?.[1] ?? ""}
+                        disabled={(field.parts?.[0] ?? "") === "none"}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
+                            },
+                          })
+                        }
+                        placeholder="2"
+                      />
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">개</span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === WATER_RESISTANCE_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">IP</span>
+                      {IP_LABELS.map((partLabel, partIndex) => (
+                        <input
+                          key={partLabel}
+                          inputMode="numeric"
+                          maxLength={1}
+                          className={`${inputClass} w-16 text-center`}
+                          value={field.parts?.[partIndex] ?? ""}
+                          onChange={(e) => {
+                            const parts = IP_LABELS.map((_, i) => field.parts?.[i] ?? "");
+                            parts[partIndex] = e.target.value.replace(/\D/g, "").slice(0, 1);
+                            setForm({
+                              ...form,
+                              specs: { ...form.specs, [key]: { ...field, parts } },
+                            });
+                          }}
+                          placeholder={partLabel}
+                        />
+                      ))}
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        빈칸은 X, 둘 다 비우면 지원 안 함
+                      </span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === WEIGHT_KEY ? (
+                  <div className="flex max-w-xs items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      className={inputClass}
+                      value={field.value}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                        })
+                      }
+                      placeholder="177"
+                    />
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">g</span>
+                  </div>
+                ) : kind === DISPLAY_SIZE_KEY ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        className={inputClass}
+                        value={field.value}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                          })
+                        }
+                        placeholder="6.3"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">인치</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className={inputClass}
+                        value={field.detail}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                          })
+                        }
+                        placeholder="19.5:9"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">비율</span>
+                    </div>
+                  </div>
+                ) : (
+                <div className="flex flex-col gap-1">
+                  <input
+                    className={inputClass}
+                    value={field.value}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                      })
+                    }
+                    placeholder="표시값"
+                  />
+                  <input
+                    className={inputClass}
+                    value={field.detail}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                      })
+                    }
+                    placeholder="detail (선택)"
+                  />
+                </div>
+                )}
+              </div>
+            );
+  };
+
+  const renderSubDisplays = () => (
+    <div className="flex flex-col gap-3 pt-3">
+      {SUB_DISPLAY_FIELDS.filter((field) => field.sub <= form.subDisplayCount).length > 0
+        ? Array.from({ length: form.subDisplayCount }, (_, index) => index + 1).map((sub) => (
+            <div key={sub} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <div className="mb-1 flex items-center justify-between">
+                <input
+                  className={`${inputClass} max-w-56 font-semibold`}
+                  value={form.specs[subDisplayNameKey(sub)]?.value ?? ""}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      specs: {
+                        ...form.specs,
+                        [subDisplayNameKey(sub)]: { value: e.target.value, detail: "" },
+                      },
+                    })
+                  }
+                  placeholder={defaultSubDisplayName(sub)}
+                />
+                {sub === form.subDisplayCount ? (
+                  <button
+                    type="button"
+                    className={removeButtonClass}
+                    onClick={() => setForm({ ...form, subDisplayCount: sub - 1 })}
+                  >
+                    제거
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
+                {SUB_DISPLAY_FIELDS.filter((field) => field.sub === sub).map(renderSpecRow)}
+              </div>
+            </div>
+          ))
+        : null}
+      {form.subDisplayCount < MAX_SUB_DISPLAYS ? (
+        <div>
+          <button
+            type="button"
+            className={addButtonClass}
+            onClick={() => setForm({ ...form, subDisplayCount: form.subDisplayCount + 1 })}
+          >
+            + 서브 디스플레이 추가 (메인 포함 최대 {MAX_SUB_DISPLAYS + 1}개)
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
@@ -937,345 +1435,8 @@ export function DeviceForm({
                 <span className="text-xs text-zinc-400 dark:text-zinc-500">{section.fields.length}개</span>
               </div>
               <div className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
-          {section.fields.map(({ key, label }) => {
-            const field = form.specs[key];
-            return (
-              <div key={key} className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
-                <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
-                {key === DIMENSIONS_KEY ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {DIMENSION_LABELS.map((partLabel, partIndex) => (
-                      <div key={partLabel} className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={0}
-                          step="any"
-                          className={inputClass}
-                          value={field.parts?.[partIndex] ?? ""}
-                          onChange={(e) => {
-                            const parts = DIMENSION_LABELS.map((_, i) => field.parts?.[i] ?? "");
-                            parts[partIndex] = e.target.value;
-                            setForm({
-                              ...form,
-                              specs: { ...form.specs, [key]: { ...field, parts } },
-                            });
-                          }}
-                          placeholder={partLabel}
-                        />
-                        <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
-                          {partIndex === DIMENSION_LABELS.length - 1 ? "mm" : "×"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : key === WIRED_KEY ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <select
-                        className={`${inputClass} w-40`}
-                        value={field.parts?.[0] ?? ""}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: {
-                              ...form.specs,
-                              [key]: { ...field, parts: [e.target.value, field.parts?.[1] ?? ""] },
-                            },
-                          })
-                        }
-                      >
-                        <option value="" disabled>
-                          선택
-                        </option>
-                        {[...WIRED_OPTIONS, WIRED_OTHER].map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                      {field.parts?.[0] === WIRED_OTHER ? (
-                        <input
-                          className={inputClass}
-                          value={field.parts?.[1] ?? ""}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              specs: {
-                                ...form.specs,
-                                [key]: { ...field, parts: [WIRED_OTHER, e.target.value] },
-                              },
-                            })
-                          }
-                          placeholder="단자 이름 (예: Mini-USB)"
-                        />
-                      ) : null}
-                    </div>
-                    <input
-                      className={inputClass}
-                      value={field.detail}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                        })
-                      }
-                      placeholder="detail (선택)"
-                    />
-                  </div>
-                ) : key === RESOLUTION_KEY || key === REFRESH_RATE_KEY ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      {(key === RESOLUTION_KEY ? RESOLUTION_LABELS : REFRESH_RATE_LABELS).map(
-                        (partLabel, partIndex) => (
-                          <div key={partLabel} className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={1}
-                              step={key === RESOLUTION_KEY ? 1 : "any"}
-                              className={`${inputClass} w-28`}
-                              value={field.parts?.[partIndex] ?? ""}
-                              onChange={(e) => {
-                                const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? ""];
-                                parts[partIndex] = e.target.value;
-                                setForm({
-                                  ...form,
-                                  specs: { ...form.specs, [key]: { ...field, parts } },
-                                });
-                              }}
-                              placeholder={partLabel}
-                            />
-                            <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
-                              {partIndex === 0 ? (key === RESOLUTION_KEY ? "×" : "~") : key === RESOLUTION_KEY ? "px" : "Hz"}
-                            </span>
-                          </div>
-                        ),
-                      )}
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                        {key === REFRESH_RATE_KEY ? "같으면 한 값으로 표시, " : ""}비우면 미확인
-                      </span>
-                    </div>
-                    <input
-                      className={inputClass}
-                      value={field.detail}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                        })
-                      }
-                      placeholder="detail (선택)"
-                    />
-                  </div>
-                ) : key === STYLUS_KEY ? (
-                  <div className="flex flex-col gap-1">
-                    <select
-                      className={`${inputClass} w-44`}
-                      value={field.value}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
-                        })
-                      }
-                    >
-                      {!STYLUS_OPTIONS.includes(field.value) ? (
-                        <option value={field.value} disabled>
-                          {field.value || "선택"}
-                        </option>
-                      ) : null}
-                      {STYLUS_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className={inputClass}
-                      value={field.detail}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                        })
-                      }
-                      placeholder="detail (선택)"
-                    />
-                  </div>
-                ) : key === SPEAKERS_KEY ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <select
-                        className={`${inputClass} w-36`}
-                        value={field.parts?.[0] ?? ""}
-                        onChange={(e) => {
-                          const type = e.target.value;
-                          const count = type === "none" ? "" : (field.parts?.[1] ?? "");
-                          setForm({
-                            ...form,
-                            specs: { ...form.specs, [key]: { ...field, parts: [type, count] } },
-                          });
-                        }}
-                      >
-                        <option value="" disabled>
-                          선택
-                        </option>
-                        {SPEAKER_TYPES.map((type) => (
-                          <option key={type.id} value={type.id}>
-                            {type.label}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        className={`${inputClass} w-20`}
-                        value={field.parts?.[1] ?? ""}
-                        disabled={(field.parts?.[0] ?? "") === "none"}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: {
-                              ...form.specs,
-                              [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
-                            },
-                          })
-                        }
-                        placeholder="2"
-                      />
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">개</span>
-                    </div>
-                    <input
-                      className={inputClass}
-                      value={field.detail}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                        })
-                      }
-                      placeholder="detail (선택)"
-                    />
-                  </div>
-                ) : key === WATER_RESISTANCE_KEY ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">IP</span>
-                      {IP_LABELS.map((partLabel, partIndex) => (
-                        <input
-                          key={partLabel}
-                          inputMode="numeric"
-                          maxLength={1}
-                          className={`${inputClass} w-16 text-center`}
-                          value={field.parts?.[partIndex] ?? ""}
-                          onChange={(e) => {
-                            const parts = IP_LABELS.map((_, i) => field.parts?.[i] ?? "");
-                            parts[partIndex] = e.target.value.replace(/\D/g, "").slice(0, 1);
-                            setForm({
-                              ...form,
-                              specs: { ...form.specs, [key]: { ...field, parts } },
-                            });
-                          }}
-                          placeholder={partLabel}
-                        />
-                      ))}
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                        빈칸은 X, 둘 다 비우면 지원 안 함
-                      </span>
-                    </div>
-                    <input
-                      className={inputClass}
-                      value={field.detail}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                        })
-                      }
-                      placeholder="detail (선택)"
-                    />
-                  </div>
-                ) : key === WEIGHT_KEY ? (
-                  <div className="flex max-w-xs items-center gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      step="any"
-                      className={inputClass}
-                      value={field.value}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
-                        })
-                      }
-                      placeholder="177"
-                    />
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">g</span>
-                  </div>
-                ) : key === DISPLAY_SIZE_KEY ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        className={inputClass}
-                        value={field.value}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
-                          })
-                        }
-                        placeholder="6.3"
-                      />
-                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">인치</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        className={inputClass}
-                        value={field.detail}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                          })
-                        }
-                        placeholder="19.5:9"
-                      />
-                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">비율</span>
-                    </div>
-                  </div>
-                ) : (
-                <div className="flex flex-col gap-1">
-                  <input
-                    className={inputClass}
-                    value={field.value}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
-                      })
-                    }
-                    placeholder="표시값"
-                  />
-                  <input
-                    className={inputClass}
-                    value={field.detail}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                      })
-                    }
-                    placeholder="detail (선택)"
-                  />
-                </div>
-                )}
-              </div>
-            );
-          })}
+          {section.fields.map(renderSpecRow)}
+          {section.title === "디스플레이" ? renderSubDisplays() : null}
               </div>
             </div>
           ))}
