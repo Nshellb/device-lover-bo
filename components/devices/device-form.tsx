@@ -21,6 +21,7 @@ import type {
   ApiDeviceWriteRequest,
   ApiPublicationStatus,
   ApiSpecInput,
+  ApiWirelessTechnology,
 } from "@/lib/api/types";
 
 const ALL_SPEC_FIELDS = [...SPEC_FIELDS, ...SUB_DISPLAY_FIELDS];
@@ -159,6 +160,62 @@ function parseWiredConnection(spec: { value: string; detail: string | null }): S
   };
 }
 
+// wireless is stored as one display value for API/FO compatibility, but BO
+// edits its three components independently with dropdowns.
+const WIRELESS_KEY = "wireless";
+
+function parseWireless(spec: { value: string; detail: string | null }): SpecFieldState {
+  const raw = spec.value;
+  const rawParts = raw.split(/\s*[·,]\s*/);
+  const detailParts = (spec.detail ?? "").split(/\s*[·,]\s*/).filter(Boolean);
+  const combinedParts = [...rawParts, ...detailParts];
+  const network = /(?:^|\W)5G(?:\W|$)/i.test(raw)
+    ? "5G"
+    : /(?:4G|LTE)/i.test(raw)
+      ? "4G"
+      : /(?:^|\W)3G(?:\W|$)/i.test(raw)
+        ? "3G"
+        : rawParts.find((part) => /(?:2G|3G|4G|5G|LTE)/i.test(part)) ?? "";
+
+  const wifiPart = rawParts.find((part) => /Wi-?Fi/i.test(part)) ?? "";
+  const wifi = /Wi-?Fi\s*7\b|802\.11be/i.test(wifiPart)
+    ? "Wi-Fi 7"
+    : /Wi-?Fi\s*6E\b/i.test(wifiPart)
+      ? "Wi-Fi 6E"
+      : /Wi-?Fi\s*6\b|802\.11ax/i.test(wifiPart)
+        ? "Wi-Fi 6"
+        : /Wi-?Fi\s*5\b|802\.11ac|(?:^|\/)ac(?:\/|$)/i.test(wifiPart)
+          ? "Wi-Fi 5"
+          : /Wi-?Fi\s*4\b|802\.11n|(?:^|\/)n(?:\/|$)/i.test(wifiPart)
+            ? "Wi-Fi 4"
+            : /Wi-?Fi\s*3\b|802\.11g|(?:^|\/)g(?:\/|$)/i.test(wifiPart)
+              ? "Wi-Fi 3"
+              : /Wi-?Fi\s*2\b|802\.11a|(?:^|\/)a(?:\/|$)/i.test(wifiPart)
+                ? "Wi-Fi 2"
+                : /Wi-?Fi\s*1\b|802\.11b|(?:^|\/)b(?:\/|$)/i.test(wifiPart)
+                  ? "Wi-Fi 1"
+                  : wifiPart;
+
+  const bluetoothPart = rawParts.find((part) => /Bluetooth/i.test(part)) ?? "";
+  const bluetoothVersion = bluetoothPart.match(/\d+(?:\.\d+)?/)?.[0] ?? "";
+  const bluetooth = bluetoothVersion
+    ? `Bluetooth ${bluetoothVersion.includes(".") ? bluetoothVersion : `${bluetoothVersion}.0`}`
+    : bluetoothPart;
+
+  const parseSupport = (name: "UWB" | "NFC") => {
+    const part = combinedParts.find((item) => new RegExp(`\\b${name}\\b`, "i").test(item));
+    if (!part) return "";
+    return /미지원|지원\s*(?:안|하지\s*않)/.test(part) ? "미지원" : "지원";
+  };
+  const uwb = parseSupport("UWB");
+  const nfc = parseSupport("NFC");
+  const detail = detailParts
+    .filter((part) => !/^(?:UWB|NFC)\s*(?:지원|미지원)$/i.test(part.trim()))
+    .join(" · ");
+
+  return { value: "", detail, parts: [network, wifi, bluetooth, uwb, nfc] };
+}
+
 const RATIO_PATTERN = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/;
 
 function parseDisplaySize(spec: { value: string; detail: string | null }): SpecFieldState {
@@ -185,6 +242,8 @@ function emptyFieldSpecs(): Record<string, SpecFieldState> {
       key,
       kind === SPEAKERS_KEY || kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY || kind === WIRED_KEY
         ? { value: "", detail: "", parts: ["", ""] }
+        : kind === WIRELESS_KEY
+        ? { value: "", detail: "", parts: ["", "", "", "", ""] }
         : kind === WATER_RESISTANCE_KEY
         ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
         : { value: key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
@@ -254,6 +313,10 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
     }
     if (kind === REFRESH_RATE_KEY) {
       specs[key] = parseRefreshRate(spec);
+      continue;
+    }
+    if (kind === WIRELESS_KEY) {
+      specs[key] = parseWireless(spec);
       continue;
     }
     specs[key] = {
@@ -346,6 +409,20 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       specs[key] = {
         value: option === WIRED_OTHER ? custom.trim() : option,
         detail: field.detail || null,
+      };
+      continue;
+    }
+
+    if (kind === WIRELESS_KEY) {
+      const [network = "", wifi = "", bluetooth = "", uwb = "", nfc = ""] = field.parts ?? [];
+      if (!network || !wifi || !bluetooth || !uwb || !nfc) {
+        return {
+          error: `${label}: 통신 네트워크, 와이파이 규격, 블루투스 버전, UWB, NFC를 모두 선택해주세요.`,
+        };
+      }
+      specs[key] = {
+        value: [network, wifi, bluetooth].join(" · "),
+        detail: [`UWB ${uwb}`, `NFC ${nfc}`, field.detail.trim()].filter(Boolean).join(" · "),
       };
       continue;
     }
@@ -527,10 +604,12 @@ export function DeviceForm({
   mode,
   device,
   brands,
+  wirelessTechnologies,
 }: {
   mode: "create" | "edit";
   device?: ApiDeviceDetail;
   brands: ApiAdminBrand[];
+  wirelessTechnologies: ApiWirelessTechnology[];
 }) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>(() =>
@@ -540,6 +619,9 @@ export function DeviceForm({
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmingPayload, setConfirmingPayload] = useState<ApiDeviceWriteRequest | null>(null);
+  const networkOptions = wirelessTechnologies.filter((item) => item.category === "network");
+  const wifiOptions = wirelessTechnologies.filter((item) => item.category === "wifi");
+  const bluetoothOptions = wirelessTechnologies.filter((item) => item.category === "bluetooth");
 
   useEffect(() => {
     if (error) window.scrollTo({ top: 0, behavior: "smooth" });
@@ -692,6 +774,15 @@ export function DeviceForm({
   const renderSpecRow = ({ key, label }: { key: string; label: string }) => {
     const kind = specKind(key);
             const field = form.specs[key];
+            const fieldParts = field.parts ?? [];
+            const updateWirelessPart = (partIndex: number, value: string) => {
+              const parts = Array.from({ length: 5 }, (_, index) => fieldParts[index] ?? "");
+              parts[partIndex] = value;
+              setForm({
+                ...form,
+                specs: { ...form.specs, [key]: { ...field, parts } },
+              });
+            };
             return (
               <div key={key} className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
@@ -749,6 +840,121 @@ export function DeviceForm({
                         })
                       }
                       placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === WIRELESS_KEY ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                      <label>
+                        <span className={labelClass}>통신 네트워크</span>
+                        <select
+                          className={inputClass}
+                          value={fieldParts[0] ?? ""}
+                          onChange={(e) => updateWirelessPart(0, e.target.value)}
+                        >
+                          <option value="" disabled>
+                            3G / 4G / 5G 선택
+                          </option>
+                          {fieldParts[0] &&
+                          !networkOptions.some((option) => option.value === fieldParts[0]) ? (
+                            <option value={fieldParts[0]}>{fieldParts[0]} (기존값)</option>
+                          ) : null}
+                          {networkOptions.map((option) => (
+                            <option key={option.id} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span className={labelClass}>와이파이 규격</span>
+                        <select
+                          className={inputClass}
+                          value={fieldParts[1] ?? ""}
+                          onChange={(e) => updateWirelessPart(1, e.target.value)}
+                        >
+                          <option value="" disabled>
+                            규격 선택
+                          </option>
+                          {fieldParts[1] &&
+                          !wifiOptions.some((option) => option.value === fieldParts[1]) ? (
+                            <option value={fieldParts[1]}>{fieldParts[1]} (기존값)</option>
+                          ) : null}
+                          {wifiOptions.map((option) => (
+                            <option key={option.id} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span className={labelClass}>블루투스 버전</span>
+                        <select
+                          className={inputClass}
+                          value={fieldParts[2] ?? ""}
+                          onChange={(e) => updateWirelessPart(2, e.target.value)}
+                        >
+                          <option value="" disabled>
+                            버전 선택
+                          </option>
+                          {fieldParts[2] &&
+                          !bluetoothOptions.some((option) => option.value === fieldParts[2]) ? (
+                            <option value={fieldParts[2]}>{fieldParts[2]} (기존값)</option>
+                          ) : null}
+                          {bluetoothOptions.map((option) => (
+                            <option key={option.id} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {(
+                        [
+                          { category: "uwb", label: "UWB" },
+                          { category: "nfc", label: "NFC" },
+                        ] as const
+                      ).map((capability, capabilityIndex) => {
+                        const supportOptions = wirelessTechnologies.filter(
+                          (item) => item.category === capability.category,
+                        );
+                        const currentValue = fieldParts[capabilityIndex + 3] ?? "";
+                        return (
+                        <label key={capability.category}>
+                          <span className={labelClass}>{capability.label}</span>
+                          <select
+                            className={inputClass}
+                            value={currentValue}
+                            onChange={(e) =>
+                              updateWirelessPart(capabilityIndex + 3, e.target.value)
+                            }
+                          >
+                            <option value="" disabled>
+                              지원 여부 선택
+                            </option>
+                            {currentValue &&
+                            !supportOptions.some((option) => option.value === currentValue) ? (
+                              <option value={currentValue}>{currentValue} (기존값)</option>
+                            ) : null}
+                            {supportOptions.map((option) => (
+                              <option key={option.id} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        );
+                      })}
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="추가 detail (선택)"
                     />
                   </div>
                 ) : kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY ? (

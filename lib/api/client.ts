@@ -14,6 +14,8 @@ import type {
   ApiDeviceWriteRequest,
   ApiErrorEnvelope,
   ApiPublicationStatus,
+  ApiWirelessTechnology,
+  ApiWirelessTechnologyInput,
 } from "@/lib/api/types";
 
 // Server-only: this calls the Rust API directly (device-lover-api has no CORS
@@ -247,6 +249,38 @@ export async function updateBrand(id: string, payload: ApiBrandInput): Promise<A
 
 export async function deleteBrand(id: string): Promise<void> {
   return apiDelete(`/api/v1/brands/${encodeURIComponent(id)}`);
+}
+
+export async function listWirelessTechnologies(): Promise<ApiWirelessTechnology[]> {
+  return apiFetch<ApiWirelessTechnology[]>(
+    "/api/v1/wireless-technologies",
+    undefined,
+    { noStore: true },
+  );
+}
+
+export async function createWirelessTechnology(
+  payload: ApiWirelessTechnologyInput,
+): Promise<ApiWirelessTechnology> {
+  return apiFetch<ApiWirelessTechnology>("/api/v1/wireless-technologies", undefined, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function updateWirelessTechnology(
+  id: string,
+  payload: ApiWirelessTechnologyInput,
+): Promise<ApiWirelessTechnology> {
+  return apiFetch<ApiWirelessTechnology>(
+    `/api/v1/wireless-technologies/${encodeURIComponent(id)}`,
+    undefined,
+    { method: "PUT", body: payload },
+  );
+}
+
+export async function deleteWirelessTechnology(id: string): Promise<void> {
+  return apiDelete(`/api/v1/wireless-technologies/${encodeURIComponent(id)}`);
 }
 
 export async function getAdminCameraById(id: string): Promise<ApiCamera | null> {

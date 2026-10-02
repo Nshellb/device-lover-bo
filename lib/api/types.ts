@@ -29,6 +29,18 @@ export type ApiBrandInput = {
   name: string;
 };
 
+export type ApiWirelessTechnologyCategory = "network" | "wifi" | "bluetooth" | "uwb" | "nfc";
+
+export type ApiWirelessTechnology = {
+  id: string;
+  category: ApiWirelessTechnologyCategory;
+  value: string;
+  label: string;
+  sortOrder: number;
+};
+
+export type ApiWirelessTechnologyInput = Omit<ApiWirelessTechnology, "id">;
+
 export type ApiDeviceSummary = {
   id: string;
   slug: string;
