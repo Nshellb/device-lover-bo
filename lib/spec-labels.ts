@@ -1,16 +1,22 @@
-// Matches the 26 keys in device-lover-api's src/catalog.rs SPEC_KEYS.
+// Matches device-lover-api's src/catalog.rs SPEC_KEYS, plus "virtual" rows that
+// only position their dedicated editors in the form (VIRTUAL_SPEC_KEYS): they are
+// stored in their own structured fields, not as spec rows.
 // Colors are no longer one of these generic keys — device-form.tsx has a
 // dedicated colors section backed by the API's own `colors` field.
 export const SPEC_FIELDS: { key: string; label: string }[] = [
   { key: "operatingSystem", label: "운영체제" },
   { key: "dimensions", label: "크기" },
   { key: "weight", label: "무게" },
+  { key: "materials", label: "소재" },
   { key: "storage", label: "저장 용량" },
   { key: "stylus", label: "펜 지원" },
   { key: "displayPanel", label: "디스플레이 패널" },
   { key: "displaySize", label: "디스플레이" },
   { key: "displayResolution", label: "해상도" },
   { key: "refreshRate", label: "주사율" },
+  { key: "displayPeakBrightness", label: "피크 밝기" },
+  { key: "displayLamination", label: "라미네이팅" },
+  { key: "displayAntiReflective", label: "반사 방지" },
   { key: "displayFeatures", label: "디스플레이 기능" },
   { key: "processor", label: "프로세서 (AP)" },
   { key: "memory", label: "메모리" },
@@ -25,6 +31,7 @@ export const SPEC_FIELDS: { key: string; label: string }[] = [
   { key: "videoPlayback", label: "동영상 재생" },
   { key: "fastCharging", label: "유선 충전" },
   { key: "wirelessCharging", label: "무선 충전" },
+  { key: "sim", label: "SIM" },
   { key: "wireless", label: "무선 연결" },
   { key: "biometrics", label: "생체 인증" },
   { key: "waterResistance", label: "방수·방진" },
@@ -57,14 +64,15 @@ export const SPEC_SECTIONS: { title: string; keys: string[] }[] = [
   { title: "성능", keys: ["storage"] },
   {
     title: "디스플레이",
-    keys: ["displayPanel", "displayResolution", "refreshRate", "displayFeatures"],
+    keys: ["displayPanel", "displayResolution", "refreshRate", "displayPeakBrightness", "displayLamination", "displayAntiReflective", "displayFeatures"],
   },
   { title: "카메라", keys: ["telephoto", "digitalZoom", "frontCamera", "videoRecording"] },
   {
     title: "배터리와 충전",
     keys: ["batteryCapacity", "videoPlayback", "fastCharging", "wirelessCharging"],
   },
-  { title: "연결과 내구성", keys: ["wireless"] },
+  { title: "연결과 내구성", keys: ["wireless", "sim"] },
+  { title: "기타", keys: ["materials"] },
 ];
 
 // Optional extra displays for foldables (device-lover-api's SUB_DISPLAY_KEY_GROUPS).
@@ -75,8 +83,19 @@ const SUB_DISPLAY_PARTS: { suffix: string; label: string }[] = [
   { suffix: "DisplaySize", label: "디스플레이" },
   { suffix: "DisplayResolution", label: "해상도" },
   { suffix: "RefreshRate", label: "주사율" },
+  { suffix: "PeakBrightness", label: "피크 밝기" },
+  { suffix: "DisplayLamination", label: "라미네이팅" },
+  { suffix: "DisplayAntiReflective", label: "반사 방지" },
   { suffix: "DisplayFeatures", label: "디스플레이 기능" },
 ];
+
+export const VIRTUAL_SPEC_KEYS = new Set([
+  "dimensions",
+  "materials",
+  "batteryCapacity",
+  "fastCharging",
+  "wirelessCharging",
+]);
 
 export const MAX_SUB_DISPLAYS = 2;
 
@@ -96,7 +115,8 @@ export const SUB_DISPLAY_FIELDS: { key: string; label: string; sub: number }[] =
 
 // subNDisplaySize -> displaySize; plain keys are returned unchanged.
 export function specKind(key: string): string {
-  return key.replace(/^sub\d(.)/, (_, first: string) => first.toLowerCase());
+  const kind = key.replace(/^sub\d(.)/, (_, first: string) => first.toLowerCase());
+  return kind === "peakBrightness" ? "displayPeakBrightness" : kind;
 }
 
 // Sections for read-only views: SPEC_SECTIONS with the sub displays right after 디스플레이.

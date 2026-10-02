@@ -167,8 +167,28 @@ function DeviceDetailContent({
         </h3>
         {SPEC_DETAIL_SECTIONS.map((section) => {
           // dimensions is a separate structured field, shown as a spec row here.
+          const chargeText = (watts: number | null) =>
+            watts === null ? "미확인" : watts === 0 ? "미지원" : `${watts}W`;
           const specOf = (key: string) =>
-            key === "dimensions"
+            key === "materials"
+              ? device.materials.length > 0
+                ? {
+                    value: device.materials
+                      .map((m) => `${m.part}: ${m.material}${m.note ? ` (${m.note})` : ""}`)
+                      .join(" / "),
+                    detail: null,
+                  }
+                : undefined
+              : key === "batteryCapacity"
+                ? {
+                    value: device.power.batteryMah === null ? "미확인" : `${device.power.batteryMah}mAh`,
+                    detail: device.power.batteryNote,
+                  }
+                : key === "fastCharging"
+                  ? { value: chargeText(device.power.wiredW), detail: device.power.wiredNote }
+                  : key === "wirelessCharging"
+                    ? { value: chargeText(device.power.wirelessW), detail: device.power.wirelessNote }
+            : key === "dimensions"
               ? device.dimensions.length > 0
                 ? {
                     value: device.dimensions

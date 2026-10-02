@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
+import { ThousandsInput } from "@/components/ui/thousands-input";
 import {
   MAX_SUB_DISPLAYS,
   SPEC_FIELDS,
   SPEC_SECTIONS,
   SUB_DISPLAY_FIELDS,
+  VIRTUAL_SPEC_KEYS,
   defaultSubDisplayName,
   specKind,
   subDisplayNameKey,
@@ -18,6 +20,8 @@ import type {
   ApiAdminBrand,
   ApiDeviceDetail,
   ApiDimension,
+  ApiMaterial,
+  ApiPower,
   ApiDeviceWriteRequest,
   ApiPublicationStatus,
   ApiSpecInput,
@@ -35,7 +39,16 @@ const SPEC_FORM_COUNT = SPEC_FORM_SECTIONS.reduce((sum, section) => sum + sectio
 type SpecFieldState = { value: string; detail: string; parts?: string[] };
 type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
-type ConfigFieldState = { label: string; storageGb: string; ramGb: string };
+type ConfigFieldState = { label: string; storageGb: string; ramGb: string; priceKrw: string; priceUsd: string };
+type MaterialFieldState = { part: string; material: string; note: string };
+type PowerFieldState = {
+  batteryMah: string;
+  batteryNote: string;
+  wiredW: string;
+  wiredNote: string;
+  wirelessW: string;
+  wirelessNote: string;
+};
 type ColorFieldState = { name: string; imageUrl: string; colorCode: string; exclusive: boolean };
 
 type DimensionFieldState = {
@@ -62,6 +75,8 @@ type FormState = {
   specs: Record<string, SpecFieldState>;
   subDisplayCount: number;
   dimensions: DimensionFieldState[];
+  materials: MaterialFieldState[];
+  power: PowerFieldState;
 };
 
 // displaySize is entered as two fields, stored as value "6.3인치" and
@@ -145,20 +160,40 @@ function parseRefreshRate(spec: { value: string; detail: string | null }): SpecF
   };
 }
 
-// wiredConnection is a dropdown of common ports plus "그외" with a free-text
-// value (form state `parts`: option, custom text).
+// wiredConnection and sim are dropdowns of common choices plus "그외" with a
+// free-text value (form state `parts`: option, custom text).
 const WIRED_KEY = "wiredConnection";
-const WIRED_OPTIONS = ["USB Type-C", "Lightning", "micro-USB", "Apple 30-pin"];
+const SIM_KEY = "sim";
+const CHOICE_OPTIONS: Record<string, string[]> = {
+  [WIRED_KEY]: ["USB Type-C", "Lightning", "micro-USB", "Apple 30-pin"],
+  [SIM_KEY]: [
+    "Nano-SIM 1개",
+    "Nano-SIM 1개 + eSIM",
+    "Nano-SIM 2개",
+    "Nano-SIM 2개 + eSIM",
+    "eSIM 전용",
+    "미확인",
+  ],
+};
 const WIRED_OTHER = "그외";
 
-function parseWiredConnection(spec: { value: string; detail: string | null }): SpecFieldState {
-  const known = WIRED_OPTIONS.includes(spec.value);
+function parseChoice(kind: string, spec: { value: string; detail: string | null }): SpecFieldState {
+  const known = CHOICE_OPTIONS[kind].includes(spec.value);
   return {
     value: "",
     detail: spec.detail ?? "",
     parts: known ? [spec.value, ""] : [spec.value ? WIRED_OTHER : "", spec.value],
   };
 }
+
+// displayPeakBrightness (and subNPeakBrightness) is a number stored as "2600니트";
+// empty is stored as "미확인".
+const PEAK_KEY = "displayPeakBrightness";
+
+// displayLamination / displayAntiReflective (and the sub display variants) are
+// 있음 / 없음 / 미확인 selects; the detail is optional. FO shows them only for "있음".
+const TREATMENT_KEYS = ["displayLamination", "displayAntiReflective"];
+const TREATMENT_OPTIONS = ["있음", "없음", "미확인"];
 
 // wireless is stored as one display value for API/FO compatibility, but BO
 // edits its three components independently with dropdowns.
@@ -216,6 +251,43 @@ function parseWireless(spec: { value: string; detail: string | null }): SpecFiel
   return { value: "", detail, parts: [network, wifi, bluetooth, uwb, nfc] };
 }
 
+// memory and storage keep their capacity text in `value`; the technology standard
+// (LPDDR5X, UFS 4.0, ...) is a dropdown stored as the first token of the detail
+// ("LPDDR5X, 나머지 설명"). Form state: `parts[0]` = standard, `detail` = the rest.
+const MEMORY_KEY = "memory";
+const STORAGE_KEY = "storage";
+const STANDARD_OPTIONS: Record<string, string[]> = {
+  [MEMORY_KEY]: ["LPDDR2", "LPDDR3", "LPDDR4", "LPDDR4X", "LPDDR5", "LPDDR5X", "LPDDR6"],
+  [STORAGE_KEY]: [
+    "eMMC 4.5",
+    "eMMC 5.0",
+    "eMMC 5.1",
+    "UFS 2.0",
+    "UFS 2.1",
+    "UFS 2.2",
+    "UFS 3.0",
+    "UFS 3.1",
+    "UFS 4.0",
+    "UFS 4.1",
+    "NVMe",
+  ],
+};
+
+function parseWithStandard(
+  kind: string,
+  spec: { value: string; detail: string | null },
+): SpecFieldState {
+  const detail = spec.detail ?? "";
+  const options = [...(STANDARD_OPTIONS[kind] ?? [])].sort((a, b) => b.length - a.length);
+  for (const option of options) {
+    if (!detail.toLowerCase().startsWith(option.toLowerCase())) continue;
+    const rest = detail.slice(option.length);
+    if (rest && !/^[\s,·]/.test(rest)) continue;
+    return { value: spec.value, detail: rest.replace(/^[\s,·]+/, ""), parts: [option] };
+  }
+  return { value: spec.value, detail, parts: [""] };
+}
+
 const RATIO_PATTERN = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/;
 
 function parseDisplaySize(spec: { value: string; detail: string | null }): SpecFieldState {
@@ -240,13 +312,15 @@ function emptyFieldSpecs(): Record<string, SpecFieldState> {
       const kind = specKind(key);
       return [
       key,
-      kind === SPEAKERS_KEY || kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY || kind === WIRED_KEY
+      kind in STANDARD_OPTIONS
+        ? { value: "정보 없음", detail: "", parts: [""] }
+        : kind === SPEAKERS_KEY || kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY || kind in CHOICE_OPTIONS || kind === SIM_KEY
         ? { value: "", detail: "", parts: ["", ""] }
         : kind === WIRELESS_KEY
         ? { value: "", detail: "", parts: ["", "", "", "", ""] }
         : kind === WATER_RESISTANCE_KEY
         ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
-        : { value: key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
+        : { value: TREATMENT_KEYS.includes(kind) ? "미확인" : key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY || kind === PEAK_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
     ];
     }),
   );
@@ -269,6 +343,15 @@ function emptyForm(): FormState {
     specs: emptySpecs(),
     subDisplayCount: 0,
     dimensions: [{ label: "본체", width: "", height: "", depth: "", note: "" }],
+    materials: [],
+    power: {
+      batteryMah: "",
+      batteryNote: "",
+      wiredW: "",
+      wiredNote: "",
+      wirelessW: "",
+      wirelessNote: "",
+    },
   };
 }
 
@@ -291,6 +374,10 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       specs[key] = parseDisplaySize(spec);
       continue;
     }
+    if (kind in STANDARD_OPTIONS) {
+      specs[key] = parseWithStandard(kind, spec);
+      continue;
+    }
     if (kind === WEIGHT_KEY) {
       specs[key] = parseWeight(spec);
       continue;
@@ -303,8 +390,22 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       specs[key] = parseSpeakers(spec);
       continue;
     }
-    if (kind === WIRED_KEY) {
-      specs[key] = parseWiredConnection(spec);
+    if (kind in CHOICE_OPTIONS) {
+      specs[key] = parseChoice(kind, spec);
+      continue;
+    }
+    if (TREATMENT_KEYS.includes(kind)) {
+      specs[key] = {
+        value: TREATMENT_OPTIONS.includes(spec.value) ? spec.value : "미확인",
+        detail: spec.detail ?? "",
+      };
+      continue;
+    }
+    if (kind === PEAK_KEY) {
+      specs[key] = {
+        value: spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "",
+        detail: spec.detail ?? "",
+      };
       continue;
     }
     if (kind === RESOLUTION_KEY) {
@@ -350,6 +451,8 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       label: config.label,
       storageGb: String(config.storageGb),
       ramGb: config.ramGb != null ? String(config.ramGb) : "",
+      priceKrw: config.priceKrw != null ? String(config.priceKrw) : "",
+      priceUsd: config.priceUsd != null ? String(config.priceUsd) : "",
     })),
     colors: device.colors.map((color) => ({
       name: color.name,
@@ -359,6 +462,19 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
     })),
     specs,
     subDisplayCount: device.specs.sub2DisplaySize ? 2 : device.specs.sub1DisplaySize ? 1 : 0,
+    materials: device.materials.map((item) => ({
+      part: item.part,
+      material: item.material,
+      note: item.note ?? "",
+    })),
+    power: {
+      batteryMah: device.power.batteryMah != null ? String(device.power.batteryMah) : "",
+      batteryNote: device.power.batteryNote ?? "",
+      wiredW: device.power.wiredW != null ? String(device.power.wiredW) : "",
+      wiredNote: device.power.wiredNote ?? "",
+      wirelessW: device.power.wirelessW != null ? String(device.power.wirelessW) : "",
+      wirelessNote: device.power.wirelessNote ?? "",
+    },
     dimensions: device.dimensions.map((dimension) => ({
       label: dimension.label,
       width: String(dimension.widthMm),
@@ -398,13 +514,32 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       continue;
     }
 
-    if (kind === DIMENSIONS_KEY) continue;
+    if (VIRTUAL_SPEC_KEYS.has(kind)) continue;
 
-    if (kind === WIRED_KEY) {
+    if (kind === PEAK_KEY) {
+      const nits = field.value.trim();
+      if (nits && !(Number(nits) > 0)) {
+        return { error: `${label}: 니트를 0보다 큰 숫자로 입력하거나, 모르면 비워주세요.` };
+      }
+      specs[key] = { value: nits ? `${nits}니트` : "미확인", detail: field.detail || null };
+      continue;
+    }
+
+    if (kind in STANDARD_OPTIONS) {
+      if (!field.value.trim()) return { error: `${label}: 용량을 입력해주세요.` };
+      const standard = field.parts?.[0] ?? "";
+      specs[key] = {
+        value: field.value,
+        detail: [standard, field.detail.trim()].filter(Boolean).join(", ") || null,
+      };
+      continue;
+    }
+
+    if (kind in CHOICE_OPTIONS) {
       const [option = "", custom = ""] = field.parts ?? [];
-      if (!option) return { error: `${label}: 단자 종류를 선택해주세요.` };
+      if (!option) return { error: `${label}: 종류를 선택해주세요.` };
       if (option === WIRED_OTHER && !custom.trim()) {
-        return { error: `${label}: '그외'를 선택하면 단자 이름을 입력해주세요.` };
+        return { error: `${label}: '그외'를 선택하면 이름을 직접 입력해주세요.` };
       }
       specs[key] = {
         value: option === WIRED_OTHER ? custom.trim() : option,
@@ -503,6 +638,38 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     };
   }
 
+  const materials: ApiMaterial[] = [];
+  for (const [index, item] of form.materials.entries()) {
+    if (!item.part || !item.material) {
+      return { error: `소재 ${index + 1}: 부위와 소재를 선택해주세요.` };
+    }
+    materials.push({ part: item.part, material: item.material, note: item.note.trim() || null });
+  }
+
+  const parsePower = (raw: string, label: string, integer = false): number | null | "error" => {
+    if (!raw.trim()) return null;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0 || (integer && !Number.isInteger(value))) return "error";
+    return value;
+  };
+  const batteryMah = parsePower(form.power.batteryMah, "배터리", true);
+  const wiredW = parsePower(form.power.wiredW, "유선 충전");
+  const wirelessW = parsePower(form.power.wirelessW, "무선 충전");
+  if (batteryMah === "error" || batteryMah === 0) {
+    return { error: "배터리 용량(mAh)은 0보다 큰 정수로 입력해주세요." };
+  }
+  if (wiredW === "error" || wirelessW === "error") {
+    return { error: "충전 W는 0 이상의 숫자로 입력해주세요 (0 = 미지원, 비우면 미확인)." };
+  }
+  const power: ApiPower = {
+    batteryMah,
+    batteryNote: form.power.batteryNote.trim() || null,
+    wiredW,
+    wiredNote: form.power.wiredNote.trim() || null,
+    wirelessW,
+    wirelessNote: form.power.wirelessNote.trim() || null,
+  };
+
   const dimensions: ApiDimension[] = [];
   for (const [index, dimension] of form.dimensions.entries()) {
     const values = DIMENSION_PARTS.map((part) => Number(dimension[part]));
@@ -529,7 +696,15 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     if (ramGb !== null && (!Number.isFinite(ramGb) || ramGb <= 0)) {
       return { error: "RAM 용량(GB)은 0보다 큰 숫자여야 합니다." };
     }
-    configurations.push({ label: config.label, storageGb, ramGb });
+    const priceKrw = config.priceKrw.trim() ? Number(config.priceKrw) : null;
+    if (priceKrw !== null && (!Number.isInteger(priceKrw) || priceKrw <= 0)) {
+      return { error: "출시가(원)는 0보다 큰 정수로 입력해주세요." };
+    }
+    const priceUsd = config.priceUsd.trim() ? Number(config.priceUsd) : null;
+    if (priceUsd !== null && (!Number.isFinite(priceUsd) || priceUsd <= 0)) {
+      return { error: "출시가(달러)는 0보다 큰 숫자로 입력해주세요." };
+    }
+    configurations.push({ label: config.label, storageGb, ramGb, priceKrw, priceUsd });
   }
 
   const colors = [];
@@ -585,14 +760,19 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       sources,
       configurations,
       dimensions,
+      materials,
+      power,
       colors,
       specs,
     },
   };
 }
 
-const inputClass =
-  "w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
+// Compact inputs (explicit width) use inputBaseClass: inputClass includes w-full,
+// which would otherwise win over a w-NN utility and stretch the field.
+const inputBaseClass =
+  "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
+const inputClass = `w-full ${inputBaseClass}`;
 const labelClass = "mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400";
 const sectionClass = "rounded-lg border border-zinc-200 p-4 dark:border-zinc-800";
 const removeButtonClass =
@@ -709,7 +889,7 @@ export function DeviceForm({
       {form.dimensions.map((dimension, index) => (
         <div key={index} className="flex flex-wrap items-center gap-2">
           <input
-            className={`${inputClass} w-28`}
+            className={`${inputBaseClass} w-28`}
             value={dimension.label}
             onChange={(e) => setDimension(index, { label: e.target.value })}
             placeholder="이름 (본체)"
@@ -720,7 +900,7 @@ export function DeviceForm({
                 type="number"
                 min={0}
                 step="any"
-                className={`${inputClass} w-24`}
+                className={`${inputBaseClass} w-24`}
                 value={dimension[part]}
                 onChange={(e) => setDimension(index, { [part]: e.target.value })}
                 placeholder={DIMENSION_PART_LABELS[partIndex]}
@@ -731,7 +911,7 @@ export function DeviceForm({
             </div>
           ))}
           <input
-            className={`${inputClass} w-48`}
+            className={`${inputBaseClass} w-48`}
             value={dimension.note}
             onChange={(e) => setDimension(index, { note: e.target.value })}
             placeholder="메모 (선택)"
@@ -771,6 +951,113 @@ export function DeviceForm({
     </div>
   );
 
+  const MATERIAL_PARTS = ["전면", "후면", "프레임", "힌지", "커버 디스플레이", "기타"];
+  const MATERIAL_TYPES = ["유리", "알루미늄", "티타늄", "스테인리스", "플라스틱", "세라믹", "가죽", "기타"];
+
+  const setMaterial = (index: number, patch: Partial<MaterialFieldState>) =>
+    setForm({
+      ...form,
+      materials: form.materials.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    });
+
+  const renderMaterials = () => (
+    <div className="flex flex-col gap-2">
+      {form.materials.map((item, index) => (
+        <div key={index} className="flex flex-wrap items-center gap-2">
+          <select
+            className={`${inputBaseClass} w-36`}
+            value={item.part}
+            onChange={(e) => setMaterial(index, { part: e.target.value })}
+          >
+            <option value="" disabled>
+              부위 선택
+            </option>
+            {MATERIAL_PARTS.map((part) => (
+              <option key={part} value={part}>
+                {part}
+              </option>
+            ))}
+          </select>
+          <select
+            className={`${inputBaseClass} w-32`}
+            value={item.material}
+            onChange={(e) => setMaterial(index, { material: e.target.value })}
+          >
+            <option value="" disabled>
+              소재 선택
+            </option>
+            {MATERIAL_TYPES.map((material) => (
+              <option key={material} value={material}>
+                {material}
+              </option>
+            ))}
+          </select>
+          <input
+            className={`${inputBaseClass} w-64`}
+            value={item.note}
+            onChange={(e) => setMaterial(index, { note: e.target.value })}
+            placeholder="세부 (Gorilla Glass Victus 2, Armor Aluminum 등)"
+          />
+          <button
+            type="button"
+            className={removeButtonClass}
+            onClick={() =>
+              setForm({ ...form, materials: form.materials.filter((_, i) => i !== index) })
+            }
+          >
+            제거
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          type="button"
+          className={addButtonClass}
+          onClick={() =>
+            setForm({ ...form, materials: [...form.materials, { part: "", material: "", note: "" }] })
+          }
+        >
+          + 소재 추가
+        </button>
+      </div>
+    </div>
+  );
+
+  const setPower = (patch: Partial<PowerFieldState>) =>
+    setForm({ ...form, power: { ...form.power, ...patch } });
+
+  const renderPower = (which: "battery" | "wired" | "wireless") => {
+    const config = {
+      battery: { value: form.power.batteryMah, note: form.power.batteryNote, unit: "mAh", hint: "비우면 미확인", valueKey: "batteryMah", noteKey: "batteryNote" },
+      wired: { value: form.power.wiredW, note: form.power.wiredNote, unit: "W", hint: "0 = 미지원, 비우면 미확인", valueKey: "wiredW", noteKey: "wiredNote" },
+      wireless: { value: form.power.wirelessW, note: form.power.wirelessNote, unit: "W", hint: "0 = 미지원, 비우면 미확인", valueKey: "wirelessW", noteKey: "wirelessNote" },
+    }[which];
+
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <input
+            type="number"
+            min={0}
+            step={which === "battery" ? 1 : "any"}
+            className={`${inputBaseClass} w-36 min-w-36 shrink-0`}
+            value={config.value}
+            onChange={(e) => setPower({ [config.valueKey]: e.target.value } as Partial<PowerFieldState>)}
+            placeholder={which === "battery" ? "4400" : "25"}
+          />
+          <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{config.unit}</span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">{config.hint}</span>
+        </div>
+        <input
+          className={inputClass}
+          value={config.note}
+          onChange={(e) => setPower({ [config.noteKey]: e.target.value } as Partial<PowerFieldState>)}
+          placeholder="detail (선택)"
+        />
+      </div>
+    );
+  };
+
   const renderSpecRow = ({ key, label }: { key: string; label: string }) => {
     const kind = specKind(key);
             const field = form.specs[key];
@@ -788,11 +1075,80 @@ export function DeviceForm({
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
                 {kind === DIMENSIONS_KEY ? (
                   renderDimensions()
-                ) : kind === WIRED_KEY ? (
+                ) : kind === "materials" ? (
+                  renderMaterials()
+                ) : kind === "batteryCapacity" ? (
+                  renderPower("battery")
+                ) : kind === "fastCharging" ? (
+                  renderPower("wired")
+                ) : kind === "wirelessCharging" ? (
+                  renderPower("wireless")
+                ) : TREATMENT_KEYS.includes(kind) ? (
+                  <div className="flex flex-col gap-1">
+                    <select
+                      className={`${inputBaseClass} w-28`}
+                      value={field.value}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                        })
+                      }
+                    >
+                      {TREATMENT_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
+                ) : kind === PEAK_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        className={`${inputBaseClass} w-28`}
+                        value={field.value}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                          })
+                        }
+                        placeholder="2600"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">니트</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">비우면 미확인</span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>                ) : kind in CHOICE_OPTIONS ? (
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <select
-                        className={`${inputClass} w-40`}
+                        className={`${inputBaseClass} ${kind === SIM_KEY ? "w-72" : "w-40"}`}
                         value={field.parts?.[0] ?? ""}
                         onChange={(e) =>
                           setForm({
@@ -807,7 +1163,7 @@ export function DeviceForm({
                         <option value="" disabled>
                           선택
                         </option>
-                        {[...WIRED_OPTIONS, WIRED_OTHER].map((option) => (
+                        {[...CHOICE_OPTIONS[kind], WIRED_OTHER].map((option) => (
                           <option key={option} value={option}>
                             {option}
                           </option>
@@ -967,7 +1323,7 @@ export function DeviceForm({
                               type="number"
                               min={1}
                               step={kind === RESOLUTION_KEY ? 1 : "any"}
-                              className={`${inputClass} w-28`}
+                              className={`${inputBaseClass} w-28`}
                               value={field.parts?.[partIndex] ?? ""}
                               onChange={(e) => {
                                 const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? ""];
@@ -1001,10 +1357,54 @@ export function DeviceForm({
                       placeholder="detail (선택)"
                     />
                   </div>
+                ) : kind in STANDARD_OPTIONS ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        className={`${inputBaseClass} w-56`}
+                        value={field.value}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                          })
+                        }
+                        placeholder={kind === MEMORY_KEY ? "용량 (12GB, 16GB)" : "용량 (256GB, 512GB)"}
+                      />
+                      <select
+                        className={`${inputBaseClass} w-40`}
+                        value={field.parts?.[0] ?? ""}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, parts: [e.target.value] } },
+                          })
+                        }
+                      >
+                        <option value="">규격 선택 안 함</option>
+                        {STANDARD_OPTIONS[kind].map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
                 ) : kind === STYLUS_KEY ? (
                   <div className="flex flex-col gap-1">
                     <select
-                      className={`${inputClass} w-44`}
+                      className={`${inputBaseClass} w-44`}
                       value={field.value}
                       onChange={(e) =>
                         setForm({
@@ -1040,7 +1440,7 @@ export function DeviceForm({
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <select
-                        className={`${inputClass} w-36`}
+                        className={`${inputBaseClass} w-36`}
                         value={field.parts?.[0] ?? ""}
                         onChange={(e) => {
                           const type = e.target.value;
@@ -1064,7 +1464,7 @@ export function DeviceForm({
                         type="number"
                         min={1}
                         step={1}
-                        className={`${inputClass} w-20`}
+                        className={`${inputBaseClass} w-20`}
                         value={field.parts?.[1] ?? ""}
                         disabled={(field.parts?.[0] ?? "") === "none"}
                         onChange={(e) =>
@@ -1094,14 +1494,14 @@ export function DeviceForm({
                   </div>
                 ) : kind === WATER_RESISTANCE_KEY ? (
                   <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 whitespace-nowrap">
                       <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">IP</span>
                       {IP_LABELS.map((partLabel, partIndex) => (
                         <input
                           key={partLabel}
                           inputMode="numeric"
                           maxLength={1}
-                          className={`${inputClass} w-16 text-center`}
+                          className={`${inputBaseClass} w-16 shrink-0 text-center`}
                           value={field.parts?.[partIndex] ?? ""}
                           onChange={(e) => {
                             const parts = IP_LABELS.map((_, i) => field.parts?.[i] ?? "");
@@ -1114,8 +1514,8 @@ export function DeviceForm({
                           placeholder={partLabel}
                         />
                       ))}
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                        빈칸은 X, 둘 다 비우면 지원 안 함
+                      <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+                        빈칸은 X로 저장, 둘 다 비우면 지원 안 함
                       </span>
                     </div>
                     <input
@@ -1403,10 +1803,10 @@ export function DeviceForm({
                   aliases: form.aliases.map((a, i) => (i === index ? { ...a, value: e.target.value } : a)),
                 })
               }
-              placeholder="SM-S921"
+              placeholder="모델 번호 또는 별칭 (예: SM-S921)"
             />
             <select
-              className={`${inputClass} w-48`}
+              className={`${inputBaseClass} w-48`}
               value={alias.kind}
               onChange={(e) =>
                 setForm({
@@ -1415,9 +1815,9 @@ export function DeviceForm({
                 })
               }
             >
-              <option value="model_number">model_number</option>
-              <option value="hardware_identifier">hardware_identifier</option>
-              <option value="alias">alias</option>
+              <option value="model_number">모델 번호</option>
+              <option value="hardware_identifier">하드웨어 식별자</option>
+              <option value="alias">별칭</option>
             </select>
           </div>
         )}
@@ -1501,7 +1901,7 @@ export function DeviceForm({
             ...form,
             configurations: [
               ...form.configurations,
-              { label: "", storageGb: "", ramGb: "" },
+              { label: "", storageGb: "", ramGb: "", priceKrw: "", priceUsd: "" },
             ],
           })
         }
@@ -1509,7 +1909,7 @@ export function DeviceForm({
           setForm({ ...form, configurations: form.configurations.filter((_, i) => i !== index) })
         }
         renderItem={(config, index) => (
-          <div className="grid flex-1 grid-cols-[1fr_auto_auto_auto] gap-2">
+          <div className="grid flex-1 grid-cols-[1fr_auto_auto_auto_auto_auto] gap-2">
             <input
               className={inputClass}
               value={config.label}
@@ -1526,7 +1926,7 @@ export function DeviceForm({
             <input
               type="number"
               min={1}
-              className={`${inputClass} w-28`}
+              className={`${inputBaseClass} w-28`}
               value={config.storageGb}
               onChange={(e) =>
                 setForm({
@@ -1541,7 +1941,7 @@ export function DeviceForm({
             <input
               type="number"
               min={1}
-              className={`${inputClass} w-24`}
+              className={`${inputBaseClass} w-24`}
               value={config.ramGb}
               onChange={(e) =>
                 setForm({
@@ -1552,6 +1952,33 @@ export function DeviceForm({
                 })
               }
               placeholder="RAM GB"
+            />
+            <ThousandsInput
+              className={`${inputBaseClass} w-36`}
+              value={config.priceKrw}
+              onValueChange={(priceKrw) =>
+                setForm({
+                  ...form,
+                  configurations: form.configurations.map((c, i) =>
+                    i === index ? { ...c, priceKrw } : c,
+                  ),
+                })
+              }
+              placeholder="출시가 (원)"
+            />
+            <ThousandsInput
+              decimals={2}
+              className={`${inputBaseClass} w-32`}
+              value={config.priceUsd}
+              onValueChange={(priceUsd) =>
+                setForm({
+                  ...form,
+                  configurations: form.configurations.map((c, i) =>
+                    i === index ? { ...c, priceUsd } : c,
+                  ),
+                })
+              }
+              placeholder="출시가 ($)"
             />
           </div>
         )}
