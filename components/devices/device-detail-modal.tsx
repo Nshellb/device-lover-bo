@@ -183,7 +183,11 @@ function DeviceDetailContent({
               : device.specs[key];
           const rows = section.keys.filter((key) => specOf(key));
           const title = section.sub
-            ? (device.specs[`sub${section.sub}DisplayName`]?.value ?? section.title)
+            ? `${
+                (device.specs[`sub${section.sub}DisplayName`]?.value ?? "")
+                  .replace(/\s*디스플레이$/, "")
+                  .trim() || `서브${section.sub}`
+              } 디스플레이`
             : section.title;
           if (rows.length === 0) return null;
 

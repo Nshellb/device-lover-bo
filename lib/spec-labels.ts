@@ -82,7 +82,8 @@ export const MAX_SUB_DISPLAYS = 2;
 
 // Editable name of each sub display (optional on the API; the form always sets it).
 export const subDisplayNameKey = (sub: number) => `sub${sub}DisplayName`;
-export const defaultSubDisplayName = (sub: number) => `서브${sub} 디스플레이`;
+// Stored without the trailing word; every view renders it as "<이름> 디스플레이".
+export const defaultSubDisplayName = (sub: number) => `서브${sub}`;
 
 export const SUB_DISPLAY_FIELDS: { key: string; label: string; sub: number }[] = [1, 2].flatMap(
   (sub) =>
