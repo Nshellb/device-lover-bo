@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
+import { ImagePreview } from "@/components/ui/image-preview";
 import { ThousandsInput } from "@/components/ui/thousands-input";
+import { formatThousands } from "@/lib/format-number";
 import {
   MAX_SUB_DISPLAYS,
   SPEC_FIELDS,
@@ -25,6 +27,8 @@ import type {
   ApiDeviceWriteRequest,
   ApiPublicationStatus,
   ApiSpecInput,
+  ApiSoftwareInput,
+  ApiSoftwareVersion,
   ApiWirelessTechnology,
 } from "@/lib/api/types";
 
@@ -40,6 +44,8 @@ type SpecFieldState = { value: string; detail: string; parts?: string[] };
 type AliasFieldState = { value: string; kind: string };
 type SourceFieldState = { url: string; title: string; checkedAt: string; isPrimary: boolean };
 type ConfigFieldState = { label: string; storageGb: string; ramGb: string; priceKrw: string; priceUsd: string };
+type SoftwareFieldState = { versionId: string; isLaunch: boolean; note: string };
+
 type MaterialFieldState = { part: string; material: string; note: string };
 type PowerFieldState = {
   batteryMah: string;
@@ -66,6 +72,7 @@ type FormState = {
   releaseDate: string;
   variant: string;
   imageUrl: string;
+  imageAlt: string;
   launchVideoUrl: string;
   publicationStatus: ApiPublicationStatus;
   aliases: AliasFieldState[];
@@ -76,6 +83,7 @@ type FormState = {
   subDisplayCount: number;
   dimensions: DimensionFieldState[];
   materials: MaterialFieldState[];
+  software: { os: SoftwareFieldState[]; ux: SoftwareFieldState[] };
   power: PowerFieldState;
 };
 
@@ -166,6 +174,7 @@ const WIRED_KEY = "wiredConnection";
 const SIM_KEY = "sim";
 const CHOICE_OPTIONS: Record<string, string[]> = {
   [WIRED_KEY]: ["USB Type-C", "Lightning", "micro-USB", "Apple 30-pin"],
+  displaySupplier: ["Samsung Display", "LG Display", "BOE", "Tianma", "CSOT", "Visionox", "미확인"],
   [SIM_KEY]: [
     "Nano-SIM 1개",
     "Nano-SIM 1개 + eSIM",
@@ -192,6 +201,12 @@ const PEAK_KEY = "displayPeakBrightness";
 
 // displayLamination / displayAntiReflective (and the sub display variants) are
 // 있음 / 없음 / 미확인 selects; the detail is optional. FO shows them only for "있음".
+// displayColorGamut is free text ("DCI-P3 100%"); displayContrastRatio is a number
+// stored as "2,000,000:1". Both are stored as "미확인" when left empty.
+const GAMUT_KEY = "displayColorGamut";
+const CONTRAST_KEY = "displayContrastRatio";
+const SUPPLIER_KEY = "displaySupplier";
+
 const TREATMENT_KEYS = ["displayLamination", "displayAntiReflective"];
 const TREATMENT_OPTIONS = ["있음", "없음", "미확인"];
 
@@ -312,7 +327,9 @@ function emptyFieldSpecs(): Record<string, SpecFieldState> {
       const kind = specKind(key);
       return [
       key,
-      kind in STANDARD_OPTIONS
+      kind === SUPPLIER_KEY
+        ? { value: "", detail: "", parts: ["미확인", ""] }
+        : kind in STANDARD_OPTIONS
         ? { value: "정보 없음", detail: "", parts: [""] }
         : kind === SPEAKERS_KEY || kind === RESOLUTION_KEY || kind === REFRESH_RATE_KEY || kind in CHOICE_OPTIONS || kind === SIM_KEY
         ? { value: "", detail: "", parts: ["", ""] }
@@ -320,7 +337,7 @@ function emptyFieldSpecs(): Record<string, SpecFieldState> {
         ? { value: "", detail: "", parts: ["", "", "", "", ""] }
         : kind === WATER_RESISTANCE_KEY
         ? { value: "", detail: "", parts: IP_LABELS.map(() => "") }
-        : { value: TREATMENT_KEYS.includes(kind) ? "미확인" : key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY || kind === PEAK_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
+        : { value: TREATMENT_KEYS.includes(kind) ? "미확인" : kind === GAMUT_KEY || kind === CONTRAST_KEY || key.startsWith("sub") || kind === DISPLAY_SIZE_KEY || kind === WEIGHT_KEY || kind === PEAK_KEY ? "" : kind === STYLUS_KEY ? "미지원" : "정보 없음", detail: "" },
     ];
     }),
   );
@@ -334,6 +351,7 @@ function emptyForm(): FormState {
     releaseDate: "",
     variant: "",
     imageUrl: "",
+    imageAlt: "",
     launchVideoUrl: "",
     publicationStatus: "draft",
     aliases: [],
@@ -344,6 +362,7 @@ function emptyForm(): FormState {
     subDisplayCount: 0,
     dimensions: [{ label: "본체", width: "", height: "", depth: "", note: "" }],
     materials: [],
+    software: { os: [], ux: [] },
     power: {
       batteryMah: "",
       batteryNote: "",
@@ -401,6 +420,17 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       };
       continue;
     }
+    if (kind === GAMUT_KEY) {
+      specs[key] = { value: spec.value === "미확인" ? "" : spec.value, detail: spec.detail ?? "" };
+      continue;
+    }
+    if (kind === CONTRAST_KEY) {
+      specs[key] = {
+        value: spec.value.split(":")[0].replace(/\D/g, ""),
+        detail: spec.detail ?? "",
+      };
+      continue;
+    }
     if (kind === PEAK_KEY) {
       specs[key] = {
         value: spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "",
@@ -438,6 +468,7 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
     releaseDate: device.releaseDate,
     variant: device.variant ?? "",
     imageUrl: device.imageUrl ?? "",
+    imageAlt: device.imageAlt ?? "",
     launchVideoUrl: device.launchVideoUrl ?? "",
     publicationStatus: device.publicationStatus,
     aliases: device.aliasDetails.map((alias) => ({ value: alias.value, kind: alias.kind })),
@@ -462,6 +493,14 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
     })),
     specs,
     subDisplayCount: device.specs.sub2DisplaySize ? 2 : device.specs.sub1DisplaySize ? 1 : 0,
+    software: {
+      os: device.software
+        .filter((item) => item.category === "os")
+        .map((item) => ({ versionId: item.versionId, isLaunch: item.isLaunch, note: item.note ?? "" })),
+      ux: device.software
+        .filter((item) => item.category === "ux")
+        .map((item) => ({ versionId: item.versionId, isLaunch: item.isLaunch, note: item.note ?? "" })),
+    },
     materials: device.materials.map((item) => ({
       part: item.part,
       material: item.material,
@@ -485,7 +524,7 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
   };
 }
 
-function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { error: string } {
+function buildPayload(form: FormState, softwareVersions: ApiSoftwareVersion[]): { payload: ApiDeviceWriteRequest } | { error: string } {
   const specs: Record<string, ApiSpecInput> = {};
 
   for (let sub = 1; sub <= form.subDisplayCount; sub++) {
@@ -515,6 +554,23 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     }
 
     if (VIRTUAL_SPEC_KEYS.has(kind)) continue;
+
+    if (kind === GAMUT_KEY) {
+      specs[key] = { value: field.value.trim() || "미확인", detail: field.detail || null };
+      continue;
+    }
+
+    if (kind === CONTRAST_KEY) {
+      const ratio = field.value.trim();
+      if (ratio && !(Number(ratio) > 0)) {
+        return { error: `${label}: 명암비를 0보다 큰 숫자로 입력하거나, 모르면 비워주세요.` };
+      }
+      specs[key] = {
+        value: ratio ? `${formatThousands(ratio)}:1` : "미확인",
+        detail: field.detail || null,
+      };
+      continue;
+    }
 
     if (kind === PEAK_KEY) {
       const nits = field.value.trim();
@@ -638,6 +694,32 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
     };
   }
 
+  // Entries are sent oldest -> newest (by the managed sort order) so the last one
+  // of a category is its latest version.
+  const sortOrderOf = new Map(softwareVersions.map((version) => [version.id, version.sortOrder]));
+  const software: ApiSoftwareInput[] = [];
+  for (const [category, label] of [["os", "운영체제"], ["ux", "UX"]] as const) {
+    const entries = form.software[category];
+    if (entries.some((item) => !item.versionId)) {
+      return { error: `${label}: 버전을 선택해주세요.` };
+    }
+    if (new Set(entries.map((item) => item.versionId)).size !== entries.length) {
+      return { error: `${label}: 같은 버전이 중복되어 있습니다.` };
+    }
+    if (entries.length > 0 && entries.filter((item) => item.isLaunch).length !== 1) {
+      return { error: `${label}: 출시 버전을 하나만 지정해주세요.` };
+    }
+    [...entries]
+      .sort((a, b) => (sortOrderOf.get(a.versionId) ?? 0) - (sortOrderOf.get(b.versionId) ?? 0))
+      .forEach((item) =>
+        software.push({
+          versionId: item.versionId,
+          isLaunch: item.isLaunch,
+          note: item.note.trim() || null,
+        }),
+      );
+  }
+
   const materials: ApiMaterial[] = [];
   for (const [index, item] of form.materials.entries()) {
     if (!item.part || !item.material) {
@@ -751,6 +833,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       releaseDate: form.releaseDate,
       variant: form.variant || null,
       imageUrl: form.imageUrl || null,
+      imageAlt: form.imageAlt.trim() || null,
       launchVideoUrl: form.launchVideoUrl || null,
       publicationStatus: form.publicationStatus,
       aliases: form.aliases.filter((alias) => alias.value.trim()).map((alias) => ({
@@ -761,6 +844,7 @@ function buildPayload(form: FormState): { payload: ApiDeviceWriteRequest } | { e
       configurations,
       dimensions,
       materials,
+      software,
       power,
       colors,
       specs,
@@ -785,11 +869,13 @@ export function DeviceForm({
   device,
   brands,
   wirelessTechnologies,
+  softwareVersions,
 }: {
   mode: "create" | "edit";
   device?: ApiDeviceDetail;
   brands: ApiAdminBrand[];
   wirelessTechnologies: ApiWirelessTechnology[];
+  softwareVersions: ApiSoftwareVersion[];
 }) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>(() =>
@@ -811,7 +897,7 @@ export function DeviceForm({
     event.preventDefault();
     setError(null);
 
-    const result = buildPayload(form);
+    const result = buildPayload(form, softwareVersions);
     if ("error" in result) {
       setError(result.error);
       return;
@@ -867,7 +953,7 @@ export function DeviceForm({
       // navigates to a brand-new /edit URL and unmounts this component, so
       // the toast would otherwise never actually be seen.
       window.setTimeout(() => {
-        router.push(`/devices/${saved.id}/edit`);
+        router.push(`/devices/${saved.slug}/edit`);
         router.refresh();
         setSubmitting(false);
         setToast(null);
@@ -1058,6 +1144,88 @@ export function DeviceForm({
     );
   };
 
+  const setSoftware = (category: "os" | "ux", entries: SoftwareFieldState[]) =>
+    setForm({ ...form, software: { ...form.software, [category]: entries } });
+
+  const renderSoftware = (category: "os" | "ux") => {
+    const entries = form.software[category];
+    const options = softwareVersions
+      .filter((version) => version.category === category)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+    const update = (index: number, patch: Partial<SoftwareFieldState>) =>
+      setSoftware(
+        category,
+        entries.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)),
+      );
+
+    return (
+      <div className="flex flex-col gap-2">
+        {entries.map((entry, index) => (
+          <div key={index} className="flex flex-wrap items-center gap-2">
+            <select
+              className={`${inputBaseClass} w-56`}
+              value={entry.versionId}
+              onChange={(e) => update(index, { versionId: e.target.value })}
+            >
+              <option value="" disabled>
+                버전 선택
+              </option>
+              {options.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.label}
+                </option>
+              ))}
+            </select>
+            <label className="flex shrink-0 items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300">
+              <input
+                type="radio"
+                name={`${category}-launch`}
+                checked={entry.isLaunch}
+                onChange={() =>
+                  setSoftware(
+                    category,
+                    entries.map((item, i) => ({ ...item, isLaunch: i === index })),
+                  )
+                }
+              />
+              출시 버전
+            </label>
+            <input
+              className={`${inputBaseClass} w-64`}
+              value={entry.note}
+              onChange={(e) => update(index, { note: e.target.value })}
+              placeholder="메모 (선택)"
+            />
+            <button
+              type="button"
+              className={removeButtonClass}
+              onClick={() => setSoftware(category, entries.filter((_, i) => i !== index))}
+            >
+              제거
+            </button>
+          </div>
+        ))}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={addButtonClass}
+            onClick={() =>
+              setSoftware(category, [
+                ...entries,
+                { versionId: "", isLaunch: entries.length === 0, note: "" },
+              ])
+            }
+          >
+            + {category === "os" ? "운영체제" : "UX"} 버전 추가
+          </button>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">
+            출시 버전과 업그레이드되는 모든 버전을 추가하세요. 목록은 BO &gt; 운영체제 / UX 관리에서 관리합니다.
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   const renderSpecRow = ({ key, label }: { key: string; label: string }) => {
     const kind = specKind(key);
             const field = form.specs[key];
@@ -1075,6 +1243,10 @@ export function DeviceForm({
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
                 {kind === DIMENSIONS_KEY ? (
                   renderDimensions()
+                ) : kind === "operatingSystem" ? (
+                  renderSoftware("os")
+                ) : kind === "ux" ? (
+                  renderSoftware("ux")
                 ) : kind === "materials" ? (
                   renderMaterials()
                 ) : kind === "batteryCapacity" ? (
@@ -1083,6 +1255,51 @@ export function DeviceForm({
                   renderPower("wired")
                 ) : kind === "wirelessCharging" ? (
                   renderPower("wireless")
+                ) : kind === GAMUT_KEY || kind === CONTRAST_KEY ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      {kind === CONTRAST_KEY ? (
+                        <>
+                          <ThousandsInput
+                            className={`${inputBaseClass} w-40`}
+                            value={field.value}
+                            onValueChange={(value) =>
+                              setForm({
+                                ...form,
+                                specs: { ...form.specs, [key]: { ...field, value } },
+                              })
+                            }
+                            placeholder="2,000,000"
+                          />
+                          <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">: 1</span>
+                        </>
+                      ) : (
+                        <input
+                          className={`${inputBaseClass} w-64`}
+                          value={field.value}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                            })
+                          }
+                          placeholder="DCI-P3 100%"
+                        />
+                      )}
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">비우면 미확인</span>
+                    </div>
+                    <input
+                      className={inputClass}
+                      value={field.detail}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
+                        })
+                      }
+                      placeholder="detail (선택)"
+                    />
+                  </div>
                 ) : TREATMENT_KEYS.includes(kind) ? (
                   <div className="flex flex-col gap-1">
                     <select
@@ -1764,14 +1981,26 @@ export function DeviceForm({
               placeholder="12GB, 512GB"
             />
           </div>
-          <div>
-            <label className={labelClass}>대표 이미지 URL (색상 미선택 시 표시)</label>
-            <input
-              className={inputClass}
-              value={form.imageUrl}
-              onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
-              placeholder="https://..."
-            />
+          <div className="col-span-2">
+            <label className={labelClass}>대표 이미지 URL (색상 미선택 시 표시) / 대체 텍스트 (alt)</label>
+            <div className="flex items-end gap-3">
+              <ImagePreview url={form.imageUrl} alt={form.imageAlt || `${form.name || "기기"} 대표 이미지`} />
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <input
+                  className={inputClass}
+                  value={form.imageUrl}
+                  onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
+                  placeholder="https://..."
+                />
+                <input
+                  className={inputClass}
+                  value={form.imageAlt}
+                  maxLength={200}
+                  onChange={(e) => setForm({ ...form, imageAlt: e.target.value })}
+                  placeholder={`대체 텍스트 (alt) — ${form.name || "기기명"} 대표 이미지, 비우면 기기명 사용`}
+                />
+              </div>
+            </div>
           </div>
           <div className="col-span-2">
             <label className={labelClass}>런칭 영상 URL</label>

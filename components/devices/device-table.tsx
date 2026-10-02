@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveImageUrl } from "@/lib/image-url";
 import { useState } from "react";
 
 import { DeviceDetailModal } from "@/components/devices/device-detail-modal";
@@ -40,7 +41,7 @@ export function DeviceTable({ devices }: { devices: ApiDeviceSummary[] }) {
                     // next/image avoids that hostname check.
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={device.imageUrl}
+                      src={resolveImageUrl(device.imageUrl)}
                       alt=""
                       width={36}
                       height={36}

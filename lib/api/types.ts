@@ -29,6 +29,33 @@ export type ApiBrandInput = {
   name: string;
 };
 
+export type ApiSoftwareVersionCategory = "os" | "ux";
+
+export type ApiSoftwareVersion = {
+  id: string;
+  category: ApiSoftwareVersionCategory;
+  value: string;
+  label: string;
+  sortOrder: number;
+};
+
+export type ApiSoftwareVersionInput = Omit<ApiSoftwareVersion, "id">;
+
+export type ApiDeviceSoftware = {
+  versionId: string;
+  category: ApiSoftwareVersionCategory;
+  value: string;
+  label: string;
+  isLaunch: boolean;
+  note: string | null;
+};
+
+export type ApiSoftwareInput = {
+  versionId: string;
+  isLaunch: boolean;
+  note: string | null;
+};
+
 export type ApiWirelessTechnologyCategory = "network" | "wifi" | "bluetooth" | "uwb" | "nfc";
 
 export type ApiWirelessTechnology = {
@@ -53,6 +80,7 @@ export type ApiDeviceSummary = {
   aliases: string[];
   modelNumbers: string[];
   imageUrl: string | null;
+  imageAlt: string | null;
   publicationStatus: ApiPublicationStatus;
 };
 
@@ -114,6 +142,7 @@ export type ApiDeviceDetail = ApiDeviceSummary & {
   configurations: ApiDeviceConfiguration[];
   dimensions: ApiDimension[];
   materials: ApiMaterial[];
+  software: ApiDeviceSoftware[];
   power: ApiPower;
   colors: ApiDeviceColor[];
   sourceUrl: string;
@@ -234,6 +263,7 @@ export type ApiDeviceWriteRequest = {
   releaseDate: string;
   variant: string | null;
   imageUrl: string | null;
+  imageAlt: string | null;
   launchVideoUrl: string | null;
   publicationStatus: ApiPublicationStatus;
   aliases: ApiAliasInput[];
@@ -241,6 +271,7 @@ export type ApiDeviceWriteRequest = {
   configurations: ApiConfigurationInput[];
   dimensions: ApiDimension[];
   materials: ApiMaterial[];
+  software: ApiSoftwareInput[];
   power: ApiPower;
   colors: ApiColorInput[];
   specs: Record<string, ApiSpecInput>;

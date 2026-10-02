@@ -5,6 +5,7 @@
 // dedicated colors section backed by the API's own `colors` field.
 export const SPEC_FIELDS: { key: string; label: string }[] = [
   { key: "operatingSystem", label: "운영체제" },
+  { key: "ux", label: "UX" },
   { key: "dimensions", label: "크기" },
   { key: "weight", label: "무게" },
   { key: "materials", label: "소재" },
@@ -17,6 +18,9 @@ export const SPEC_FIELDS: { key: string; label: string }[] = [
   { key: "displayPeakBrightness", label: "피크 밝기" },
   { key: "displayLamination", label: "라미네이팅" },
   { key: "displayAntiReflective", label: "반사 방지" },
+  { key: "displayColorGamut", label: "색영역" },
+  { key: "displayContrastRatio", label: "명암비" },
+  { key: "displaySupplier", label: "공급사" },
   { key: "displayFeatures", label: "디스플레이 기능" },
   { key: "processor", label: "프로세서 (AP)" },
   { key: "memory", label: "메모리" },
@@ -59,12 +63,13 @@ export const SPEC_SECTIONS: { title: string; keys: string[] }[] = [
       "speakers",
       "stylus",
       "operatingSystem",
+      "ux",
     ],
   },
   { title: "성능", keys: ["storage"] },
   {
     title: "디스플레이",
-    keys: ["displayPanel", "displayResolution", "refreshRate", "displayPeakBrightness", "displayLamination", "displayAntiReflective", "displayFeatures"],
+    keys: ["displayPanel", "displayResolution", "refreshRate", "displayPeakBrightness", "displayLamination", "displayAntiReflective", "displayColorGamut", "displayContrastRatio", "displaySupplier", "displayFeatures"],
   },
   { title: "카메라", keys: ["telephoto", "digitalZoom", "frontCamera", "videoRecording"] },
   {
@@ -86,10 +91,15 @@ const SUB_DISPLAY_PARTS: { suffix: string; label: string }[] = [
   { suffix: "PeakBrightness", label: "피크 밝기" },
   { suffix: "DisplayLamination", label: "라미네이팅" },
   { suffix: "DisplayAntiReflective", label: "반사 방지" },
+  { suffix: "DisplayColorGamut", label: "색영역" },
+  { suffix: "DisplayContrastRatio", label: "명암비" },
+  { suffix: "DisplaySupplier", label: "공급사" },
   { suffix: "DisplayFeatures", label: "디스플레이 기능" },
 ];
 
 export const VIRTUAL_SPEC_KEYS = new Set([
+  "operatingSystem",
+  "ux",
   "dimensions",
   "materials",
   "batteryCapacity",

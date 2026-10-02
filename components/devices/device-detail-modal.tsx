@@ -131,7 +131,7 @@ function DeviceDetailContent({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Link
-            href={`/devices/${device.id}/edit`}
+            href={`/devices/${device.slug}/edit`}
             className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-50"
           >
             수정
@@ -169,8 +169,22 @@ function DeviceDetailContent({
           // dimensions is a separate structured field, shown as a spec row here.
           const chargeText = (watts: number | null) =>
             watts === null ? "미확인" : watts === 0 ? "미지원" : `${watts}W`;
+          const softwareText = (category: "os" | "ux") => {
+            const items = device.software.filter((item) => item.category === category);
+            if (items.length === 0) return undefined;
+            return {
+              value: items
+                .map((item) => `${item.label}${item.isLaunch ? " (출시)" : ""}`)
+                .join(" → "),
+              detail: items.map((item) => item.note).filter(Boolean).join(", ") || null,
+            };
+          };
           const specOf = (key: string) =>
-            key === "materials"
+            key === "operatingSystem"
+              ? softwareText("os")
+              : key === "ux"
+                ? softwareText("ux")
+                : key === "materials"
               ? device.materials.length > 0
                 ? {
                     value: device.materials

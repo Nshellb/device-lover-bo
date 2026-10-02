@@ -14,6 +14,8 @@ import type {
   ApiDeviceWriteRequest,
   ApiErrorEnvelope,
   ApiPublicationStatus,
+  ApiSoftwareVersion,
+  ApiSoftwareVersionInput,
   ApiWirelessTechnology,
   ApiWirelessTechnologyInput,
 } from "@/lib/api/types";
@@ -281,6 +283,38 @@ export async function updateWirelessTechnology(
 
 export async function deleteWirelessTechnology(id: string): Promise<void> {
   return apiDelete(`/api/v1/wireless-technologies/${encodeURIComponent(id)}`);
+}
+
+export async function listSoftwareVersions(): Promise<ApiSoftwareVersion[]> {
+  return apiFetch<ApiSoftwareVersion[]>(
+    "/api/v1/software-versions",
+    undefined,
+    { noStore: true },
+  );
+}
+
+export async function createSoftwareVersion(
+  payload: ApiSoftwareVersionInput,
+): Promise<ApiSoftwareVersion> {
+  return apiFetch<ApiSoftwareVersion>("/api/v1/software-versions", undefined, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function updateSoftwareVersion(
+  id: string,
+  payload: ApiSoftwareVersionInput,
+): Promise<ApiSoftwareVersion> {
+  return apiFetch<ApiSoftwareVersion>(
+    `/api/v1/software-versions/${encodeURIComponent(id)}`,
+    undefined,
+    { method: "PUT", body: payload },
+  );
+}
+
+export async function deleteSoftwareVersion(id: string): Promise<void> {
+  return apiDelete(`/api/v1/software-versions/${encodeURIComponent(id)}`);
 }
 
 export async function getAdminCameraById(id: string): Promise<ApiCamera | null> {

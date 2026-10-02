@@ -11,6 +11,7 @@ const NAV_GROUPS = [
       { href: "/brands", label: "브랜드 관리" },
       { href: "/devices", label: "스마트폰 관리" },
       { href: "/cameras", label: "카메라 관리" },
+      { href: "/software-versions", label: "운영체제 / UX 관리" },
     ],
   },
   {

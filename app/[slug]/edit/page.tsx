@@ -5,6 +5,7 @@ import { DeviceForm } from "@/components/devices/device-form";
 import {
   getAdminDeviceByIdOrSlug,
   listAdminBrands,
+  listSoftwareVersions,
   listWirelessTechnologies,
 } from "@/lib/api/client";
 
@@ -22,10 +23,11 @@ export async function generateMetadata({ params }: EditBySlugPageProps): Promise
 
 export default async function EditBySlugPage({ params }: EditBySlugPageProps) {
   const { slug } = await params;
-  const [device, brands, wirelessTechnologies] = await Promise.all([
+  const [device, brands, wirelessTechnologies, softwareVersions] = await Promise.all([
     getAdminDeviceByIdOrSlug(slug),
     listAdminBrands(),
     listWirelessTechnologies(),
+    listSoftwareVersions(),
   ]);
 
   if (!device) {
@@ -42,6 +44,7 @@ export default async function EditBySlugPage({ params }: EditBySlugPageProps) {
         device={device}
         brands={brands}
         wirelessTechnologies={wirelessTechnologies}
+        softwareVersions={softwareVersions}
       />
     </div>
   );
