@@ -1232,6 +1232,9 @@ export function DeviceForm({
                   }
                   placeholder={defaultSubDisplayName(sub)}
                 />
+                <span className="mr-auto ml-2 text-sm font-semibold text-zinc-700 dark:text-zinc-200">
+                  디스플레이
+                </span>
                 {sub === form.subDisplayCount ? (
                   <button
                     type="button"
