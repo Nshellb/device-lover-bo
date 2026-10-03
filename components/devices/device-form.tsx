@@ -303,29 +303,33 @@ function parseWithStandard(
   return { value: spec.value, detail, parts: [""] };
 }
 
-// Memory capacity is entered as bare numbers ("12, 16") plus a unit dropdown kept in
-// `parts[1]`; the stored value is rebuilt as "12GB, 16GB". Values that don't fit that
-// shape (mixed units, "정보 없음") are kept as typed.
-const MEMORY_UNITS = ["MB", "GB"];
-const DEFAULT_MEMORY_UNIT = "GB";
-const MEMORY_CAPACITY_PATTERN = /^(\d+(?:\.\d+)?)\s*(MB|GB)$/i;
+// Memory/storage capacity is entered as bare numbers ("12, 16") plus a unit dropdown kept
+// in `parts[1]`; the stored value is rebuilt as "12GB, 16GB". Bare numbers take the selected
+// unit, while tokens that already carry a unit ("512GB, 1TB") or aren't numbers ("정보 없음")
+// are kept as typed, so values with mixed units survive a load/save round trip.
+const CAPACITY_UNITS: Record<string, string[]> = {
+  [MEMORY_KEY]: ["MB", "GB"],
+  [STORAGE_KEY]: ["GB", "TB"],
+};
+const DEFAULT_CAPACITY_UNIT = "GB";
+const CAPACITY_PATTERN = /^(\d+(?:\.\d+)?)\s*(MB|GB|TB)$/i;
 
-function splitMemoryUnit(value: string): { value: string; unit: string } {
+function splitCapacityUnit(kind: string, value: string): { value: string; unit: string } {
   const tokens = value.split(",").map((token) => token.trim()).filter(Boolean);
-  const matches = tokens.map((token) => token.match(MEMORY_CAPACITY_PATTERN));
+  const matches = tokens.map((token) => token.match(CAPACITY_PATTERN));
   const unit = matches[0]?.[2].toUpperCase();
-  if (!unit || matches.some((match) => !match || match[2].toUpperCase() !== unit)) {
-    return { value, unit: DEFAULT_MEMORY_UNIT };
+  if (!unit || !CAPACITY_UNITS[kind].includes(unit) || matches.some((match) => !match || match[2].toUpperCase() !== unit)) {
+    return { value, unit: DEFAULT_CAPACITY_UNIT };
   }
   return { value: matches.map((match) => match![1]).join(", "), unit };
 }
 
-function joinMemoryUnit(value: string, unit: string): string {
+function joinCapacityUnit(value: string, unit: string): string {
   return value
     .split(",")
     .map((token) => token.trim())
     .filter(Boolean)
-    .map((token) => (/^\d+(?:\.\d+)?$/.test(token) ? `${token}${unit || DEFAULT_MEMORY_UNIT}` : token))
+    .map((token) => (/^\d+(?:\.\d+)?$/.test(token) ? `${token}${unit || DEFAULT_CAPACITY_UNIT}` : token))
     .join(", ");
 }
 
@@ -421,12 +425,8 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
     }
     if (kind in STANDARD_OPTIONS) {
       const parsed = parseWithStandard(kind, spec);
-      if (kind === MEMORY_KEY) {
-        const { value, unit } = splitMemoryUnit(parsed.value);
-        specs[key] = { ...parsed, value, parts: [parsed.parts?.[0] ?? "", unit] };
-      } else {
-        specs[key] = parsed;
-      }
+      const { value, unit } = splitCapacityUnit(kind, parsed.value);
+      specs[key] = { ...parsed, value, parts: [parsed.parts?.[0] ?? "", unit] };
       continue;
     }
     if (kind === WEIGHT_KEY) {
@@ -617,7 +617,7 @@ function buildPayload(form: FormState, softwareVersions: ApiSoftwareVersion[]): 
       if (!field.value.trim()) return { error: `${label}: 용량을 입력해주세요.` };
       const standard = field.parts?.[0] ?? "";
       specs[key] = {
-        value: kind === MEMORY_KEY ? joinMemoryUnit(field.value, field.parts?.[1] ?? "") : field.value,
+        value: joinCapacityUnit(field.value, field.parts?.[1] ?? ""),
         detail: [standard, field.detail.trim()].filter(Boolean).join(", ") || null,
       };
       continue;
@@ -1618,29 +1618,27 @@ export function DeviceForm({
                             specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
                           })
                         }
-                        placeholder={kind === MEMORY_KEY ? "용량 (12, 16)" : "용량 (256GB, 512GB)"}
+                        placeholder={kind === MEMORY_KEY ? "용량 (12, 16)" : "용량 (256, 512)"}
                       />
-                      {kind === MEMORY_KEY ? (
-                        <select
-                          className={`${inputBaseClass} w-20`}
-                          value={field.parts?.[1] || DEFAULT_MEMORY_UNIT}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              specs: {
-                                ...form.specs,
-                                [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
-                              },
-                            })
-                          }
-                        >
-                          {MEMORY_UNITS.map((unit) => (
-                            <option key={unit} value={unit}>
-                              {unit}
-                            </option>
-                          ))}
-                        </select>
-                      ) : null}
+                      <select
+                        className={`${inputBaseClass} w-20`}
+                        value={field.parts?.[1] || DEFAULT_CAPACITY_UNIT}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
+                            },
+                          })
+                        }
+                      >
+                        {CAPACITY_UNITS[kind].map((unit) => (
+                          <option key={unit} value={unit}>
+                            {unit}
+                          </option>
+                        ))}
+                      </select>
                       <select
                         className={`${inputBaseClass} w-40`}
                         value={field.parts?.[0] ?? ""}
