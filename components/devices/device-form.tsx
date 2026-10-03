@@ -303,6 +303,32 @@ function parseWithStandard(
   return { value: spec.value, detail, parts: [""] };
 }
 
+// Memory capacity is entered as bare numbers ("12, 16") plus a unit dropdown kept in
+// `parts[1]`; the stored value is rebuilt as "12GB, 16GB". Values that don't fit that
+// shape (mixed units, "정보 없음") are kept as typed.
+const MEMORY_UNITS = ["MB", "GB"];
+const DEFAULT_MEMORY_UNIT = "GB";
+const MEMORY_CAPACITY_PATTERN = /^(\d+(?:\.\d+)?)\s*(MB|GB)$/i;
+
+function splitMemoryUnit(value: string): { value: string; unit: string } {
+  const tokens = value.split(",").map((token) => token.trim()).filter(Boolean);
+  const matches = tokens.map((token) => token.match(MEMORY_CAPACITY_PATTERN));
+  const unit = matches[0]?.[2].toUpperCase();
+  if (!unit || matches.some((match) => !match || match[2].toUpperCase() !== unit)) {
+    return { value, unit: DEFAULT_MEMORY_UNIT };
+  }
+  return { value: matches.map((match) => match![1]).join(", "), unit };
+}
+
+function joinMemoryUnit(value: string, unit: string): string {
+  return value
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => (/^\d+(?:\.\d+)?$/.test(token) ? `${token}${unit || DEFAULT_MEMORY_UNIT}` : token))
+    .join(", ");
+}
+
 const RATIO_PATTERN = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/;
 
 function parseDisplaySize(spec: { value: string; detail: string | null }): SpecFieldState {
@@ -394,7 +420,13 @@ function fromDevice(device: ApiDeviceDetail, brands: ApiAdminBrand[]): FormState
       continue;
     }
     if (kind in STANDARD_OPTIONS) {
-      specs[key] = parseWithStandard(kind, spec);
+      const parsed = parseWithStandard(kind, spec);
+      if (kind === MEMORY_KEY) {
+        const { value, unit } = splitMemoryUnit(parsed.value);
+        specs[key] = { ...parsed, value, parts: [parsed.parts?.[0] ?? "", unit] };
+      } else {
+        specs[key] = parsed;
+      }
       continue;
     }
     if (kind === WEIGHT_KEY) {
@@ -585,7 +617,7 @@ function buildPayload(form: FormState, softwareVersions: ApiSoftwareVersion[]): 
       if (!field.value.trim()) return { error: `${label}: 용량을 입력해주세요.` };
       const standard = field.parts?.[0] ?? "";
       specs[key] = {
-        value: field.value,
+        value: kind === MEMORY_KEY ? joinMemoryUnit(field.value, field.parts?.[1] ?? "") : field.value,
         detail: [standard, field.detail.trim()].filter(Boolean).join(", ") || null,
       };
       continue;
@@ -1586,15 +1618,39 @@ export function DeviceForm({
                             specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
                           })
                         }
-                        placeholder={kind === MEMORY_KEY ? "용량 (12GB, 16GB)" : "용량 (256GB, 512GB)"}
+                        placeholder={kind === MEMORY_KEY ? "용량 (12, 16)" : "용량 (256GB, 512GB)"}
                       />
+                      {kind === MEMORY_KEY ? (
+                        <select
+                          className={`${inputBaseClass} w-20`}
+                          value={field.parts?.[1] || DEFAULT_MEMORY_UNIT}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              specs: {
+                                ...form.specs,
+                                [key]: { ...field, parts: [field.parts?.[0] ?? "", e.target.value] },
+                              },
+                            })
+                          }
+                        >
+                          {MEMORY_UNITS.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
                       <select
                         className={`${inputBaseClass} w-40`}
                         value={field.parts?.[0] ?? ""}
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            specs: { ...form.specs, [key]: { ...field, parts: [e.target.value] } },
+                            specs: {
+                              ...form.specs,
+                              [key]: { ...field, parts: [e.target.value, field.parts?.[1] ?? ""] },
+                            },
                           })
                         }
                       >
