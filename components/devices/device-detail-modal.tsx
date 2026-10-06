@@ -7,6 +7,9 @@ import { createPortal } from "react-dom";
 import type { ApiDeviceDetail } from "@/lib/api/types";
 import { SPEC_DETAIL_SECTIONS, SPEC_FIELDS, SUB_DISPLAY_FIELDS } from "@/lib/spec-labels";
 
+// Matches device-form.tsx's PPI_PATTERN ("460ppi").
+// A leading "약" belongs to the PPI and goes with it.
+const PPI_PATTERN = /(?:약\s*)?(\d+(?:\.\d+)?)\s*ppi/i;
 const SPEC_LABELS = Object.fromEntries([...SPEC_FIELDS, ...SUB_DISPLAY_FIELDS].map(({ key, label }) => [key, label]));
 
 const PUBLICATION_STATUS_LABELS: Record<string, string> = {
@@ -234,9 +237,43 @@ function DeviceDetailContent({
                 <span className="text-xs text-zinc-400 dark:text-zinc-500">{rows.length}개</span>
               </div>
               <dl className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
-                {rows.map((key) => {
-                  const spec = specOf(key)!;
-                  const label = SPEC_LABELS[key];
+                {rows.flatMap((key) => {
+                  // displaySize keeps the ratio in its detail ("19.5:9 비율"); show it
+                  // as its own 화면 비율 row instead of repeating it beside the size.
+                  if (/^(sub\d)?[dD]isplaySize$/.test(key)) {
+                    const spec = specOf(key)!;
+                    const ratio = spec.detail?.match(/\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/)?.[0];
+                    return [
+                      { key, label: SPEC_LABELS[key], spec: { value: spec.value, detail: null } },
+                      ...(ratio
+                        ? [{
+                            key: `${key}AspectRatio`,
+                            label: SPEC_LABELS[key].replace(/디스플레이$/, "화면 비율"),
+                            spec: { value: ratio, detail: null },
+                          }]
+                        : []),
+                    ];
+                  }
+                  // Same for the PPI kept in displayResolution's detail.
+                  if (/^(sub\d)?[dD]isplayResolution$/.test(key)) {
+                    const spec = specOf(key)!;
+                    const ppi = spec.detail?.match(PPI_PATTERN);
+                    const rest = ppi
+                      ? spec.detail!.replace(ppi[0], "").replace(/^[\s,]+|[\s,]+$/g, "").replace(/,\s*,/g, ",")
+                      : spec.detail;
+                    return [
+                      { key, label: SPEC_LABELS[key], spec: { value: spec.value, detail: rest || null } },
+                      ...(ppi
+                        ? [{
+                            key: `${key}Ppi`,
+                            label: SPEC_LABELS[key].replace(/해상도$/, "PPI"),
+                            spec: { value: `${ppi[1]}ppi`, detail: null },
+                          }]
+                        : []),
+                    ];
+                  }
+                  return [{ key, label: SPEC_LABELS[key], spec: specOf(key)! }];
+                }).map(({ key, label, spec }) => {
 
                   return (
                     <div key={key} className="grid grid-cols-[120px_1fr] gap-3 py-2">

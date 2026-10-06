@@ -18,6 +18,7 @@ export const SPEC_FIELDS: { key: string; label: string }[] = [
   { key: "displayPeakBrightness", label: "피크 밝기" },
   { key: "displayLamination", label: "라미네이팅" },
   { key: "displayAntiReflective", label: "반사 방지" },
+  { key: "displayAlwaysOn", label: "Always On Display" },
   { key: "displayColorGamut", label: "색영역" },
   { key: "displayContrastRatio", label: "명암비" },
   { key: "displaySupplier", label: "공급사" },
@@ -69,7 +70,7 @@ export const SPEC_SECTIONS: { title: string; keys: string[] }[] = [
   { title: "성능", keys: ["storage"] },
   {
     title: "디스플레이",
-    keys: ["displayPanel", "displayResolution", "refreshRate", "displayPeakBrightness", "displayLamination", "displayAntiReflective", "displayColorGamut", "displayContrastRatio", "displaySupplier", "displayFeatures"],
+    keys: ["displayPanel", "displayResolution", "refreshRate", "displayPeakBrightness", "displayLamination", "displayAntiReflective", "displayAlwaysOn", "displayColorGamut", "displayContrastRatio", "displaySupplier", "displayFeatures"],
   },
   { title: "카메라", keys: ["telephoto", "digitalZoom", "frontCamera", "videoRecording"] },
   {
@@ -91,6 +92,7 @@ const SUB_DISPLAY_PARTS: { suffix: string; label: string }[] = [
   { suffix: "PeakBrightness", label: "피크 밝기" },
   { suffix: "DisplayLamination", label: "라미네이팅" },
   { suffix: "DisplayAntiReflective", label: "반사 방지" },
+  { suffix: "DisplayAlwaysOn", label: "Always On Display" },
   { suffix: "DisplayColorGamut", label: "색영역" },
   { suffix: "DisplayContrastRatio", label: "명암비" },
   { suffix: "DisplaySupplier", label: "공급사" },

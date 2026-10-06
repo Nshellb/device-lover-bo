@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { ConfirmDialog, Toast } from "@/components/ui/confirm-dialog";
 import { ImagePreview } from "@/components/ui/image-preview";
@@ -87,9 +87,9 @@ type FormState = {
   power: PowerFieldState;
 };
 
-// displaySize is entered as two fields, stored as value "6.3인치" and
-// detail "19.5:9 비율". In form state `value` holds the inches and `detail`
-// the ratio, without those suffixes.
+// displaySize is entered as 화면 크기 (inches) and 화면 비율 (N:M), stored as
+// value "6.3인치" and detail "19.5:9 비율". In form state `value` holds the
+// inches and `parts` the two ratio numbers, without those suffixes.
 const DISPLAY_SIZE_KEY = "displaySize";
 // dimensions is a separate structured field (up to 3 labelled width/height/depth
 // entries, in mm), not a spec row; the "dimensions" key only positions its editor.
@@ -146,7 +146,8 @@ const STYLUS_KEY = "stylus";
 const STYLUS_OPTIONS = ["미지원", "필압 미확인", "1024단계", "2048단계", "4096단계", "8192단계"];
 
 // displayResolution is entered as width × height (form state `parts`), stored as
-// "2532 × 1170"; refreshRate as min/max (form state `parts`), stored as "60Hz"
+// "2532 × 1170". Its PPI is entered in its own row (form state `parts[2]`) and
+// stored inside the detail as "460ppi", after any other detail text; refreshRate as min/max (form state `parts`), stored as "60Hz"
 // when equal or "1~120Hz" for a range. Empty input is stored as "미확인".
 const RESOLUTION_KEY = "displayResolution";
 const REFRESH_RATE_KEY = "refreshRate";
@@ -154,9 +155,18 @@ const RESOLUTION_LABELS = ["가로", "세로"];
 const REFRESH_RATE_LABELS = ["최소", "최대"];
 const UNCONFIRMED = "미확인";
 
+// Matches device-lover-web's splitResolutionDetail ("460ppi").
+// A leading "약" belongs to the PPI and goes with it.
+const PPI_PATTERN = /(?:약\s*)?(\d+(?:\.\d+)?)\s*ppi/i;
+
 function parseResolution(spec: { value: string; detail: string | null }): SpecFieldState {
   const numbers = spec.value.match(/\d+/g) ?? [];
-  return { value: "", detail: spec.detail ?? "", parts: [numbers[0] ?? "", numbers[1] ?? ""] };
+  const detail = spec.detail ?? "";
+  const ppi = detail.match(PPI_PATTERN);
+  const rest = ppi
+    ? detail.replace(ppi[0], "").replace(/^[\s,]+|[\s,]+$/g, "").replace(/,\s*,/g, ",")
+    : detail;
+  return { value: "", detail: rest, parts: [numbers[0] ?? "", numbers[1] ?? "", ppi?.[1] ?? ""] };
 }
 
 function parseRefreshRate(spec: { value: string; detail: string | null }): SpecFieldState {
@@ -199,15 +209,16 @@ function parseChoice(kind: string, spec: { value: string; detail: string | null 
 // empty is stored as "미확인".
 const PEAK_KEY = "displayPeakBrightness";
 
-// displayLamination / displayAntiReflective (and the sub display variants) are
-// 있음 / 없음 / 미확인 selects; the detail is optional. FO shows them only for "있음".
+// displayLamination / displayAntiReflective / displayAlwaysOn (and the sub display
+// variants) are 있음 / 없음 / 미확인 selects; the detail is optional. FO shows
+// lamination / anti-reflective only for "있음", Always On Display unless all 미확인.
 // displayColorGamut is free text ("DCI-P3 100%"); displayContrastRatio is a number
 // stored as "2,000,000:1". Both are stored as "미확인" when left empty.
 const GAMUT_KEY = "displayColorGamut";
 const CONTRAST_KEY = "displayContrastRatio";
 const SUPPLIER_KEY = "displaySupplier";
 
-const TREATMENT_KEYS = ["displayLamination", "displayAntiReflective"];
+const TREATMENT_KEYS = ["displayLamination", "displayAntiReflective", "displayAlwaysOn"];
 const TREATMENT_OPTIONS = ["있음", "없음", "미확인"];
 
 // wireless is stored as one display value for API/FO compatibility, but BO
@@ -333,12 +344,10 @@ function joinCapacityUnit(value: string, unit: string): string {
     .join(", ");
 }
 
-const RATIO_PATTERN = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/;
-
 function parseDisplaySize(spec: { value: string; detail: string | null }): SpecFieldState {
   const inches = spec.value.match(/\d+(?:\.\d+)?/)?.[0] ?? "";
-  const ratio = `${spec.detail ?? ""} ${spec.value}`.match(/\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/)?.[0];
-  return { value: inches, detail: ratio ? ratio.replace(/\s+/g, "") : "" };
+  const ratio = `${spec.detail ?? ""} ${spec.value}`.match(/(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/);
+  return { value: inches, detail: "", parts: [ratio?.[1] ?? "", ratio?.[2] ?? ""] };
 }
 
 function emptySpecs(): Record<string, SpecFieldState> {
@@ -578,10 +587,11 @@ function buildPayload(form: FormState, softwareVersions: ApiSoftwareVersion[]): 
       if (!field.value.trim() || !Number.isFinite(inches) || inches <= 0) {
         return { error: `${label}: 인치를 0보다 큰 숫자로 입력해주세요.` };
       }
-      if (!RATIO_PATTERN.test(field.detail.trim())) {
-        return { error: `${label}: 비율을 19.5:9 형식으로 입력해주세요.` };
+      const [ratioW = "", ratioH = ""] = (field.parts ?? []).map((part) => part.trim());
+      if (!(Number(ratioW) > 0) || !(Number(ratioH) > 0)) {
+        return { error: `${label}: 화면 비율을 0보다 큰 숫자로 입력해주세요. (예: 19.5:9)` };
       }
-      specs[key] = { value: `${field.value.trim()}인치`, detail: `${field.detail.trim()} 비율` };
+      specs[key] = { value: `${field.value.trim()}인치`, detail: `${ratioW}:${ratioH} 비율` };
       continue;
     }
 
@@ -651,15 +661,19 @@ function buildPayload(form: FormState, softwareVersions: ApiSoftwareVersion[]): 
     }
 
     if (kind === RESOLUTION_KEY) {
-      const [width = "", height = ""] = (field.parts ?? []).map((part) => part.trim());
+      const [width = "", height = "", ppi = ""] = (field.parts ?? []).map((part) => part.trim());
+      if (ppi && !/^[1-9]\d*$/.test(ppi)) {
+        return { error: `${label}: PPI를 정수로 입력하거나, 모르면 비워주세요.` };
+      }
+      const detail = [field.detail.trim(), ppi ? `${ppi}ppi` : ""].filter(Boolean).join(", ") || null;
       if (!width && !height) {
-        specs[key] = { value: UNCONFIRMED, detail: field.detail || null };
+        specs[key] = { value: UNCONFIRMED, detail };
         continue;
       }
       if (!/^[1-9]\d*$/.test(width) || !/^[1-9]\d*$/.test(height)) {
         return { error: `${label}: 가로·세로를 모두 정수로 입력하거나, 모르면 모두 비워주세요.` };
       }
-      specs[key] = { value: `${width} × ${height}`, detail: field.detail || null };
+      specs[key] = { value: `${width} × ${height}`, detail };
       continue;
     }
 
@@ -1258,7 +1272,43 @@ export function DeviceForm({
     );
   };
 
-  const renderSpecRow = ({ key, label }: { key: string; label: string }) => {
+  // displayResolution gets a PPI row right below it (stored in its detail).
+  const renderSpecRow = (spec: { key: string; label: string }) => {
+    if (specKind(spec.key) !== RESOLUTION_KEY) return renderSpecRowBase(spec);
+    const field = form.specs[spec.key];
+    const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? "", field.parts?.[2] ?? ""];
+    return (
+      <Fragment key={spec.key}>
+        {renderSpecRowBase(spec)}
+        <div className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
+          <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+            {spec.label.replace(/해상도$/, "PPI")}
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              className={`${inputBaseClass} w-28`}
+              value={parts[2]}
+              onChange={(e) => {
+                parts[2] = e.target.value;
+                setForm({
+                  ...form,
+                  specs: { ...form.specs, [spec.key]: { ...field, parts } },
+                });
+              }}
+              placeholder="460"
+            />
+            <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">ppi</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">비우면 미확인</span>
+          </div>
+        </div>
+      </Fragment>
+    );
+  };
+
+  const renderSpecRowBase = ({ key, label }: { key: string; label: string }) => {
     const kind = specKind(key);
             const field = form.specs[key];
             const fieldParts = field.parts ?? [];
@@ -1270,6 +1320,61 @@ export function DeviceForm({
                 specs: { ...form.specs, [key]: { ...field, parts } },
               });
             };
+            if (kind === DISPLAY_SIZE_KEY) {
+              const setRatioPart = (partIndex: number, value: string) => {
+                const parts = [fieldParts[0] ?? "", fieldParts[1] ?? ""];
+                parts[partIndex] = value;
+                setForm({
+                  ...form,
+                  specs: { ...form.specs, [key]: { ...field, parts } },
+                });
+              };
+              const ratioInput = (partIndex: number, placeholder: string) => (
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  className={inputClass}
+                  value={fieldParts[partIndex] ?? ""}
+                  onChange={(e) => setRatioPart(partIndex, e.target.value)}
+                  placeholder={placeholder}
+                />
+              );
+              return (
+                <Fragment key={key}>
+                  <div className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
+                    <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
+                    <div className="flex max-w-xs items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        className={inputClass}
+                        value={field.value}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
+                          })
+                        }
+                        placeholder="6.3"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">인치</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
+                    <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      {label.replace(/디스플레이$/, "화면 비율")}
+                    </p>
+                    <div className="flex max-w-xs items-center gap-2">
+                      {ratioInput(0, "19.5")}
+                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">:</span>
+                      {ratioInput(1, "9")}
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            }
             return (
               <div key={key} className="grid grid-cols-[110px_1fr] items-start gap-2 py-2.5">
                 <p className="pt-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</p>
@@ -1575,7 +1680,9 @@ export function DeviceForm({
                               className={`${inputBaseClass} w-28`}
                               value={field.parts?.[partIndex] ?? ""}
                               onChange={(e) => {
-                                const parts = [field.parts?.[0] ?? "", field.parts?.[1] ?? ""];
+                                const parts = [...(field.parts ?? [])];
+                                parts[0] ??= "";
+                                parts[1] ??= "";
                                 parts[partIndex] = e.target.value;
                                 setForm({
                                   ...form,
@@ -1818,40 +1925,6 @@ export function DeviceForm({
                       placeholder="177"
                     />
                     <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">g</span>
-                  </div>
-                ) : kind === DISPLAY_SIZE_KEY ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        className={inputClass}
-                        value={field.value}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: { ...form.specs, [key]: { ...field, value: e.target.value } },
-                          })
-                        }
-                        placeholder="6.3"
-                      />
-                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">인치</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        className={inputClass}
-                        value={field.detail}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            specs: { ...form.specs, [key]: { ...field, detail: e.target.value } },
-                          })
-                        }
-                        placeholder="19.5:9"
-                      />
-                      <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">비율</span>
-                    </div>
                   </div>
                 ) : (
                 <div className="flex flex-col gap-1">
